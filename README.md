@@ -14,6 +14,13 @@ The yaml diff tool.
     sudo sh -c "wget -O - https://github.com/zhranklin/ydiff/archive/$tag.tar.gz | tar xzO ydiff-$tag/ydiff > /usr/local/bin/ydiff && chmod +x /usr/local/bin/ydiff"
     ```
 
+**Tips**: Ammonite will fetch dependencies (by coursier) when you use ydiff first time, which takes a few minutes.
+To accelerate this process, you can specify your maven repository in `COURSIER_REPOSITORIES` environment, e.g.:
+
+```
+export COURSIER_REPOSITORIES='https://maven.aliyun.com/nexus/content/groups/public|sonatype:snapshots|sonatype:releases'
+```
+
 ## Usage
 ```bash
 ydiff -h
