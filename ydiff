@@ -520,8 +520,8 @@ object YamlDiffer:
       val replacement =
         if (matched.contains("\n"))
           matched.replaceAll(s"\n(${c.MARK_MODIFY_LINE})?", s"${c.TAG_END}$$0$tagStart")
-        else Matcher.quoteReplacement(matched)
-      mth.appendReplacement(b, replacement)
+        else matched
+      mth.appendReplacement(b, Matcher.quoteReplacement(replacement))
     }
     mth.appendTail(b)
     b.toString
