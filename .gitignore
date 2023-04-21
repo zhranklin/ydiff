@@ -1,3 +1,4 @@
 .idea/
 .metals/
+.ammonite/
 *.iml

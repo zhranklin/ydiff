@@ -1,4 +1,6 @@
 #!/usr/bin/env amm3
+//Ammonite 2.5.5
+//scala 3.2.0
 
 import $ivy.`com.zhranklin:scala-tricks_2.13:0.2.1`
 import $ivy.`com.lihaoyi:ammonite-ops_2.13:2.4.0-23-76673f7f`
@@ -29,6 +31,28 @@ import java.util.regex.Matcher
 import scala.language.dynamics
 
 import scala.jdk.CollectionConverters._
+
+import java.util.regex.Pattern
+
+def groups(str: String) = "\\(".r.findAllIn(str).size - """\(\?([idmsuxU=>!:]|<[!=])""".r.findAllIn(str).size
+class Interped(sc: StringContext) {
+  def unapplySeq(s: String): Option[Seq[String]] = {
+    val parts = sc.parts
+    val tail = parts.tail.map(s => if (s.startsWith("(")) s else "(.*)" + s)
+    val pattern = Pattern.compile(parts.head + tail.mkString)
+    var groupCount = groups(parts.head)
+    val usedGroup = tail.map(part => {
+      val ret = groupCount
+      groupCount += groups(part)
+      ret
+    })
+    val m = pattern matcher s
+    if (m.matches()) {
+      Some(usedGroup.map(i => m.group(i + 1)))
+    } else None
+  }
+}
+extension (sc: StringContext) def rr: Interped = new Interped(sc)
 
 object c:
   extension (s: String)
@@ -229,6 +253,42 @@ object Models:
       s"---\n# Diffs in $id\n${new ObjectMapper(factory).writeValueAsString(changes)}"
     end toString
     override def sorting = s"1$id"
+  val om = new ObjectMapper()
+  case class DiffResourceJsonPatch(id: DocID, tree: JsonNode, patch: List[JsonNode]) extends Changes:
+    import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
+    def doToString =
+      val factory = new YAMLFactory()
+        .disable(WRITE_DOC_START_MARKER)
+        .enable(MINIMIZE_QUOTES)
+      val d = id.asInstanceOf[Models.GVK]
+      patch.map { node =>
+        node.get("path").textValue() match {
+          case path @ rr"/spec/template/spec/containers/$c/env/$env/name" => s"# Ignored env: ${node.get("value")}"
+          case path @ rr"/spec/template/spec/containers/$c/env/$env/value" =>
+            //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
+            val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("env").get(env.toInt).get("name").textValue()
+            val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
+            if (patch.exists(_.get("path").textValue().equals(path.replaceAll("/value$", "/name")))) {
+              s"# Ignored env: $name"
+            } else {
+              s"kubectl -n ${d.namespace} set env ${d.kind} ${d.name} --containers=$containerName $name='${node.get("value").textValue()}'"
+            }
+          case path @ rr"/spec/template/spec/containers/$c/image" =>
+            //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
+            val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("image").textValue()
+            val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
+            s"kubectl -n ${d.namespace} set image ${d.kind} ${d.name} $containerName=${node.get("value").textValue()}"
+          case _ => s"kubectl -n ${d.namespace} patch ${d.kind} ${d.name} --type=json -p='[${om.writerWithDefaultPrettyPrinter().writeValueAsString(node)}]'"
+        }
+      }.mkString("\n")
+    end doToString
+    override def toString = s"---\n# Patch command for $id\n" + (id match {
+      case id: GVK if id.kind == "ConfigMap" => "# ConfigMap is skipped."
+      case _: GVK => doToString
+      case _ => "# Only k8s resources are supported"
+    })
+    end toString
+    override def sorting = s"1$id"
 
 object YamlDocs:
   import Models.{DocID, GVK, YamlDoc}
@@ -395,7 +455,7 @@ object YamlDiffer:
   end generateDiffText
 
   def doDiff(using _args: Args): Unit =
-    import Models.{NewResource, RemovedResource, DiffResource}
+    import Models.{NewResource, RemovedResource, DiffResource, DiffResourceJsonPatch}
     println("analyzing...")
     given args: Args = _args.copy(
       ignoreRules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => _args.f.noIgnore) ::: _args.extraIgnores ::: _args.extraIgnoreFiles.map(p => read(oPath(p))))
@@ -406,11 +466,12 @@ object YamlDiffer:
     targetDocs
       .flatMap { target =>
         args.source.get(target.id) match
-          case None => Some(NewResource(target, args.f.showNew))
+          case None => List(NewResource(target, args.f.showNew))
           case Some(source) =>
-            val result = JsonNodeFactory.instance.objectNode()
-            JsonDiff.asJson(source.tree, target.tree, DIFF_FLAGS)
+            val patch = JsonDiff.asJson(source.tree, target.tree, DIFF_FLAGS)
               .asInstanceOf[ArrayNode].elements().asScala.toList
+            val result = JsonNodeFactory.instance.objectNode()
+            patch
               .foreach { n =>
                 import c._
                 val path = n.get("path").asText()
@@ -441,7 +502,8 @@ object YamlDiffer:
                       setValue(result, s"$path$MARK_DELETE_FIELD", from)
                       setValue(result, s"$path$MARK_ADD_FIELD", to)
               }
-            Some(result).filterNot(_.isEmpty()).map(DiffResource(target.id, _))
+            List(result).filterNot(_.isEmpty()).map(DiffResource(target.id, _)) ++
+            List(patch).filter(_ => _args.f.jsonPatch).filterNot(_.isEmpty).map(DiffResourceJsonPatch(target.id, target.tree, _))
       }
       .toList
       .++ {
@@ -584,6 +646,9 @@ object Args:
         .text("Treat yaml docs as kubernetes resources.")
         .optional()
         .action(flagF("k8s")),
+      opt[Unit]("json-patch")
+        .text("Show kubectl patch commands.(k8s only)")
+        .action(flagF("jsonPatch")),
       opt[Unit]("show-new")
         .text("Show complete yaml text of new yaml docs.")
         .optional()
