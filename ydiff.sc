@@ -1,17 +1,17 @@
-#!/usr/bin/env amm3
-//Ammonite 2.5.5
-//scala 3.2.0
+#!/usr/bin/env -S scala-cli shebang --suppress-outdated-dependency-warning
+//> using scala "3.3.0"
 
-import $ivy.`com.zhranklin:scala-tricks_2.13:0.2.1`
-import $ivy.`com.lihaoyi:ammonite-ops_2.13:2.4.0-23-76673f7f`
-import $ivy.`com.flipkart.zjsonpatch:zjsonpatch:0.4.11`
-import $ivy.`com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.11`
-import $ivy.`com.lihaoyi::os-lib:0.8.0`
-import $ivy.`org.springframework:spring-core:5.1.7.RELEASE`
-import $ivy.`org.fusesource.jansi:jansi:2.2.0`
-import $ivy.`io.github.java-diff-utils:java-diff-utils:4.5`
-import $ivy.`com.github.scopt::scopt:4.0.1`
-import $ivy.`org.scala-lang.modules::scala-parser-combinators:2.1.1`
+
+//> using dep "com.zhranklin:scala-tricks_2.13:0.2.1"
+//> using dep "com.lihaoyi:ammonite-ops_2.13:2.4.0-23-76673f7f"
+//> using dep "com.flipkart.zjsonpatch:zjsonpatch:0.4.11"
+//> using dep "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.11"
+//> using dep "com.lihaoyi::os-lib:0.8.0"
+//> using dep "org.springframework:spring-core:5.1.7.RELEASE"
+//> using dep "org.fusesource.jansi:jansi:2.2.0"
+//> using dep "io.github.java-diff-utils:java-diff-utils:4.5"
+//> using dep "com.github.scopt::scopt:4.0.1"
+//> using dep "org.scala-lang.modules::scala-parser-combinators:2.1.1"
 
 import java.io.File
 import scala.collection.mutable
@@ -33,25 +33,24 @@ import scala.language.dynamics
 import scala.jdk.CollectionConverters._
 
 import java.util.regex.Pattern
+import scala.util.boundary, boundary.break
 
 def groups(str: String) = "\\(".r.findAllIn(str).size - """\(\?([idmsuxU=>!:]|<[!=])""".r.findAllIn(str).size
-class Interped(sc: StringContext) {
-  def unapplySeq(s: String): Option[Seq[String]] = {
+class Interped(sc: StringContext):
+  def unapplySeq(s: String): Option[Seq[String]] =
     val parts = sc.parts
     val tail = parts.tail.map(s => if (s.startsWith("(")) s else "(.*)" + s)
     val pattern = Pattern.compile(parts.head + tail.mkString)
     var groupCount = groups(parts.head)
-    val usedGroup = tail.map(part => {
+    val usedGroup = tail.map: part =>
       val ret = groupCount
       groupCount += groups(part)
       ret
-    })
     val m = pattern matcher s
-    if (m.matches()) {
+    if m.matches() then
       Some(usedGroup.map(i => m.group(i + 1)))
-    } else None
-  }
-}
+    else None
+
 extension (sc: StringContext) def rr: Interped = new Interped(sc)
 
 object c:
@@ -90,10 +89,10 @@ object ValueMatcher:
     override def toString = s"exact($v)"
 
   def ref(path: String) = new ValueMatcher:
-    def getValue(obj: JsonNode, path: String): Option[JsonNode] =
+    def getValue(obj: JsonNode, path: String): Option[JsonNode] = 
       var cur = obj
       path.split("/").dropRight(1).drop(1)
-        .foreach { pp =>
+        .foreach: pp => 
           val p = pp.replaceAll("~1", "/")
           cur match
             case c: ArrayNode if p.toIntOption.nonEmpty =>
@@ -101,8 +100,7 @@ object ValueMatcher:
             case c: ObjectNode =>
               cur = c.get(p)
             case _ =>
-              return None
-        }
+              println(s"Error extracting $path: $pp is neigher array nor object.")
       val last = path.split("/").last
       Option(cur).flatMap(c => Option(c.get(last)))
     end getValue
@@ -189,7 +187,7 @@ MutatingWebhookConfiguration {
 }
 """
 
-object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers {
+object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   import scala.util.parsing.combinator._
   def groups: Parser[IgnoreRules] = rep(group) ^^ (_.toMap)
   def group = kind ~ "{" ~ rep(rule) ~ "}" ^^ {
@@ -215,17 +213,16 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers {
       throw new Exception
   def parseAndMerge(s: Seq[String]): IgnoreRules =
     val result: mutable.Map[String, List[(String, ValueMatcher)]] = mutable.Map()
-    s.map(parse0).foreach { i =>
-      i.foreach {
+    s.map(parse0).foreach: i =>
+      i.foreach:
         case (k, v) =>
           if (result.contains(k))
             result.update(k, result(k).++(v))
           else result.put(k, v)
-      }
-    }
     result.toMap
   end parseAndMerge
-}
+end IgnoreRulesParser 
+
 type IgnoreRules = Map[String, List[(String, ValueMatcher)]]
 
 object Models:
@@ -244,13 +241,13 @@ object Models:
     import c._, doc.id
     override def toString = s"---\n$DELETE# Removed $id${if (show) s"\n${doc.yaml}" else ""}$RESET"
     override def sorting = s"2$id"
-  case class DiffResource(id: DocID, changes: ObjectNode) extends Changes:
+  case class DiffResource(id: DocID, changes: ObjectNode, show: Boolean) extends Changes:
     import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
     override def toString =
       val factory = new YAMLFactory()
         .disable(WRITE_DOC_START_MARKER)
         .enable(MINIMIZE_QUOTES)
-      s"---\n# Diffs in $id\n${new ObjectMapper(factory).writeValueAsString(changes)}"
+      s"---\n# Diffs in $id${if (show) s"\n${new ObjectMapper(factory).writeValueAsString(changes)}" else ""}"
     end toString
     override def sorting = s"1$id"
   val om = new ObjectMapper()
@@ -261,32 +258,30 @@ object Models:
         .disable(WRITE_DOC_START_MARKER)
         .enable(MINIMIZE_QUOTES)
       val d = id.asInstanceOf[Models.GVK]
-      patch.map { node =>
-        node.get("path").textValue() match {
+      patch.map: node =>
+        node.get("path").textValue() match
           case path @ rr"/spec/template/spec/containers/$c/env/$env/name" => s"# Ignored env: ${node.get("value")}"
           case path @ rr"/spec/template/spec/containers/$c/env/$env/value" =>
             //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
             val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("env").get(env.toInt).get("name").textValue()
             val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
-            if (patch.exists(_.get("path").textValue().equals(path.replaceAll("/value$", "/name")))) {
+            if patch.exists(_.get("path").textValue().equals(path.replaceAll("/value$", "/name"))) then
               s"# Ignored env: $name"
-            } else {
+            else
               s"kubectl -n ${d.namespace} set env ${d.kind} ${d.name} --containers=$containerName $name='${node.get("value").textValue()}'"
-            }
           case path @ rr"/spec/template/spec/containers/$c/image" =>
             //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
             val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("image").textValue()
             val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
             s"kubectl -n ${d.namespace} set image ${d.kind} ${d.name} $containerName=${node.get("value").textValue()}"
           case _ => s"kubectl -n ${d.namespace} patch ${d.kind} ${d.name} --type=json -p='[${om.writerWithDefaultPrettyPrinter().writeValueAsString(node)}]'"
-        }
-      }.mkString("\n")
+      .mkString("\n")
     end doToString
-    override def toString = s"---\n# Patch command for $id\n" + (id match {
+    override def toString = s"---\n# Patch command for $id\n" + (id match
       case id: GVK if id.kind == "ConfigMap" => "# ConfigMap is skipped."
       case _: GVK => doToString
       case _ => "# Only k8s resources are supported"
-    })
+    )
     end toString
     override def sorting = s"1$id"
 
@@ -295,10 +290,9 @@ object YamlDocs:
   trait SourceDatabase:
     def get(id: DocID)(using args: Args): Option[YamlDoc]
   object FromK8s extends SourceDatabase:
-    def get(id: DocID)(using args: Args): Option[YamlDoc] = id match {
+    def get(id: DocID)(using args: Args): Option[YamlDoc] = id match
       case gvk: GVK => get(gvk)
       case _ => None
-    }
     def get(gvk: GVK)(using args: Args): Option[YamlDoc] =
       import gvk._
       try
@@ -308,13 +302,14 @@ object YamlDocs:
           || e.result.err.string.contains("doesn't have a resource type") => None
     end get
 
-  class Static(src: => String, isK8s: Boolean) extends SourceDatabase:
+  class Static(src: => String, isK8s: => Boolean) extends SourceDatabase:
     var _sobj: MapView[DocID, YamlDoc] = _
     def sourceObjs(using args: Args) =
       if (_sobj == null)
         _sobj = src.split("(\n|^)---\\s*(\n|$)")
           .zipWithIndex
-          .flatMap{ case (y, i) => YamlDocs.read(y, isK8s, Some(i))}
+          .flatMap:
+            case (y, i) => YamlDocs.read(y, isK8s, Some(i))
           .groupBy(_.id)
           .view
           .mapValues(_.head)
@@ -325,31 +320,26 @@ object YamlDocs:
     node match
       case node: ObjectNode =>
         node.fields().asScala
-          .flatMap { kv =>
+          .flatMap: kv =>
             kv.getValue match
               case v: TextNode =>
                 io.circe.yaml.parser.parse(v.textValue()).toOption
                   .filter(_.isObject)
-                  .map { _ =>
+                  .map: _ =>
                     (kv.getKey, new ObjectMapper(new YAMLFactory).readTree(v.textValue()))
-                  }
               case v: ObjectNode =>
                 expandTextToYaml(v)
                 None
               case _ => None
-          }
-          .foreach { case (k, v) =>
-            node.put(k, v)
-          }
+          .foreach:
+            case (k, v) => node.put(k, v)
       case _ =>
   end expandTextToYaml
 
   val pathMatcher = new AntPathMatcher()
   def removeIgnoredFields(root: JsonNode, node: JsonNode, path: String, defaults: List[(String, ValueMatcher)])(using args: Args): Boolean =
-    val shouldIgnore = defaults.exists { case pt -> expect =>
-      pathMatcher.`match`(pt, path) &&
-        expect.matches(root, path, node)
-    }
+    val shouldIgnore = defaults.exists:
+      case pt -> expect => pathMatcher.`match`(pt, path) && expect.matches(root, path, node)
     node match
       case _ if shouldIgnore =>
         if (args.debug.ignore)
@@ -357,25 +347,21 @@ object YamlDocs:
         true
       case node: ObjectNode =>
         node.fields().asScala
-          .filter { kv =>
+          .filter: kv =>
             removeIgnoredFields(root, kv.getValue, s"$path/${kv.getKey}", defaults)
-          }
           .map(_.getKey)
           .toList
-          .foreach { key =>
+          .foreach: key =>
             node.remove(key)
-          }
         false
       case node: ArrayNode =>
         node.elements().asScala.toList.zipWithIndex
-          .filter { case (n, i) =>
-            removeIgnoredFields(root, n, s"$path/$i", defaults)
-          }
+          .filter:
+            case (n, i) => removeIgnoredFields(root, n, s"$path/$i", defaults)
           .map(_._2)
           .reverse
-          .foreach { i =>
+          .foreach: i =>
             node.remove(i)
-          }
         false
       case _ =>
         if (args.debug.ignore)
@@ -383,35 +369,33 @@ object YamlDocs:
         false
   end removeIgnoredFields
 
-  def read(yaml: String, k8s: Boolean, index: Option[Int])(using args: Args): Option[YamlDoc] =
-    if (yaml.trim.isEmpty) return None
+  def read(yaml: String, k8s: Boolean, index: Option[Int])(using args: Args): Option[YamlDoc] = boundary:
+    if (yaml.trim.isEmpty) break(None)
     import scala.util
-    util.Try {
+    util.Try:
       val tree = new ObjectMapper(new YAMLFactory).readTree(yaml)
-      if (tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode]) {
+      if tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode] then
         throw RuntimeException("EMPTY_OBJECT")
-      }
-      if (args.f.k8s) {
+      if args.f.k8s then
         val kind = tree.get("kind").asText()
         removeIgnoredFields(tree, tree, "", args.ignoreRules.getOrElse(kind, Nil) ::: args.ignoreRules.getOrElse("*", Nil))
-      }
-      if (args.f.expandText)
+      if args.f.expandText then
         expandTextToYaml(tree)
-      val obj = io.circe.yaml.parser.parse(new ObjectMapper(new YAMLFactory).writeValueAsString(tree)) match {
+      val obj = io.circe.yaml.parser.parse(new ObjectMapper(new YAMLFactory).writeValueAsString(tree)) match
         case Left(value) =>
           throw value.underlying
         case Right(value) =>
           value
-      }
-      val id = if (k8s) {
-        import io.circe.optics.JsonPath.root
-        val name = root.metadata.name.string.getOption(obj).get
-        val namespace = root.metadata.namespace.string.getOption(obj).getOrElse("")
-        val kind = root.kind.string.getOption(obj).get
-        new GVK(kind, name, namespace)
-      } else DocID(index.get.toString)
+      val id =
+        if (k8s) then
+          import io.circe.optics.JsonPath.root
+          val name = root.metadata.name.string.getOption(obj).get
+          val namespace = root.metadata.namespace.string.getOption(obj).getOrElse("")
+          val kind = root.kind.string.getOption(obj).get
+          new GVK(kind, name, namespace)
+        else DocID(index.get.toString)
       Models.YamlDoc(yaml, tree, obj, id)
-    } .recoverWith[YamlDoc] {
+    .recoverWith[YamlDoc]:
       case t: RuntimeException if t.getMessage == "EMPTY_OBJECT" =>
         util.Failure(t)
       case t =>
@@ -421,7 +405,7 @@ object YamlDocs:
             println(yaml)
             t.printStackTrace();
         util.Failure(t)
-      }.toOption
+    .toOption
   end read
 
 import ammonite.ops._
@@ -429,8 +413,8 @@ object YamlDiffer:
   import DiffFlags._
   val DIFF_FLAGS = java.util.EnumSet.of(OMIT_MOVE_OPERATION, OMIT_COPY_OPERATION, ADD_ORIGINAL_VALUE_ON_REPLACE)
   val diffRowGenerator = DiffRowGenerator.create()
-    .showInlineDiffs(true)
-    .inlineDiffByWord(true)
+    .showInlineDiffs(false)
+    .inlineDiffByWord(false)
     .oldTag(f => if (f) c.TAG_DELETE else c.TAG_END)
     .newTag(f => if (f) c.TAG_ADD else c.TAG_END)
     .mergeOriginalRevised(true)
@@ -441,7 +425,7 @@ object YamlDiffer:
       case n: TextNode => n.textValue().split("\n").toList.asJava
       case n => n.toString.split("\n").toList.asJava
     diffRowGenerator.generateDiffRows(splitNode(from), splitNode(to)).asScala
-      .flatMap { l =>
+      .flatMap: l =>
         import c._, l._
         import com.github.difflib.text.DiffRow.Tag
         val mode = getTag match
@@ -450,29 +434,36 @@ object YamlDiffer:
           case Tag.CHANGE => MARK_MODIFY_LINE
           case Tag.EQUAL => ""
         List(s"$mode$getOldLine")
-      }
       .mkString("\n")
   end generateDiffText
 
   def doDiff(using _args: Args): Unit =
     import Models.{NewResource, RemovedResource, DiffResource, DiffResourceJsonPatch}
-    println("analyzing...")
     given args: Args = _args.copy(
       ignoreRules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => _args.f.noIgnore) ::: _args.extraIgnores ::: _args.extraIgnoreFiles.map(p => read(oPath(p))))
     )
     if (args.debug.ignoreRules)
       println(args.ignoreRules.toString().replaceAll(", ", ",\n"))
     val targetDocs = new YamlDocs.Static(read(args.target), args.f.k8s).sourceObjs.values
+    args.dump.foreach: fn =>
+      println(s"Dumping resource to file $fn...")
+      import Models._
+      val sources: List[Either[DocID, YamlDoc]] = targetDocs.map(_.id).map(id => args.source.get(id).map(Right(_)).getOrElse(Left(id))).toList
+      val linesForAbsent: List[String] = sources.flatMap(_.left.toOption).map(id => s"# Missing resource: $id")
+      val linesForPresent: List[String] = sources.flatMap(_.right.toOption).map(doc => s"---\n${doc.yaml}")
+      os.write.over(fn, (linesForAbsent ++ linesForPresent).mkString("\n") + "\n")
+      println(s"Successfully dumpped.")
+    println("analyzing...")
     targetDocs
-      .flatMap { target =>
+      .flatMap: target =>
         args.source.get(target.id) match
-          case None => List(NewResource(target, args.f.showNew))
+          case None => List(NewResource(target, args.f.showNew && !args.f.onlyId))
           case Some(source) =>
             val patch = JsonDiff.asJson(source.tree, target.tree, DIFF_FLAGS)
               .asInstanceOf[ArrayNode].elements().asScala.toList
             val result = JsonNodeFactory.instance.objectNode()
             patch
-              .foreach { n =>
+              .foreach: n =>
                 import c._
                 val path = n.get("path").asText()
                 val value = n.get("value")
@@ -501,28 +492,25 @@ object YamlDiffer:
                     case (from, to) =>
                       setValue(result, s"$path$MARK_DELETE_FIELD", from)
                       setValue(result, s"$path$MARK_ADD_FIELD", to)
-              }
-            List(result).filterNot(_.isEmpty()).map(DiffResource(target.id, _)) ++
+            List(result).filterNot(_.isEmpty()).map(DiffResource(target.id, _, !args.f.onlyId)) ++
             List(patch).filter(_ => _args.f.jsonPatch).filterNot(_.isEmpty).map(DiffResourceJsonPatch(target.id, target.tree, _))
-      }
       .toList
       .++ {
-        args.source match {
+        args.source match
           case ydb: YamlDocs.Static =>
             ydb.sourceObjs
               .keySet.toSet
               .diff(targetDocs.map(_.id).toSet)
               .map(ydb.sourceObjs.apply)
-              .map(doc => RemovedResource(doc, args.f.showRemoved))
+              .map(doc => RemovedResource(doc, args.f.showRemoved && !args.f.onlyId))
           case _ => Nil
-        }
       }
       .sortBy(_.sorting)
-      .foreach { res =>
+      .foreach: res =>
         import c._
         var indent = 0
         var lineTemplate = " $1$2"
-        res.toString.split("\n").foreach { line =>
+        res.toString.split("\n").foreach: line =>
           val ind = line.replaceAll("^( *(- )?).*", "$1").length
           if (line.contains(s"$MARK_DELETE_FIELD:"))
             indent = ind
@@ -535,7 +523,7 @@ object YamlDiffer:
             lineTemplate = " $1$2"
           if (args.debug.unrendered)
             println(line + "<unrendered>")
-          println {
+          if (line != "---") println:
             if (line.isEmpty) ""
             else if (lineTemplate == " $1$2") line
               .replaceAll(s"^.(\\s*)$MARK_DELETE_LINE(.*)", s"$MINUS$$1$$2")
@@ -547,21 +535,17 @@ object YamlDiffer:
             else line
               .replaceAll(s"($MARK_DELETE_FIELD|$MARK_ADD_FIELD):", ":")
               .replaceAll(".( *)(.*)", lineTemplate)
-          }
-        }
         print(RESET)
-      }
   end doDiff
 
   def setValue(obj: ObjectNode, path: String, value: JsonNode): Unit =
     var cur = obj
     path.split("/").dropRight(1).drop(1)
-      .foreach{ pp =>
+      .foreach: pp =>
         val p = pp.unescapePath
         if (cur.get(p) == null)
           cur.put(p, JsonNodeFactory.instance.objectNode())
         cur = cur.get(p).asInstanceOf[ObjectNode]
-      }
     cur.put(path.split("/").last.unescapePath, value)
   end setValue
 
@@ -576,7 +560,7 @@ object YamlDiffer:
   def processCrossLineDiff(diff: String): String =
     val mth = MARKER_PT.matcher(diff)
     val b = new StringBuffer()
-    while (mth.find()) {
+    while mth.find() do
       val matched = mth.group()
       val tagStart = mth.group(1)
       val replacement =
@@ -584,7 +568,6 @@ object YamlDiffer:
           matched.replaceAll(s"\n(${c.MARK_MODIFY_LINE})?", s"${c.TAG_END}$$0$tagStart")
         else matched
       mth.appendReplacement(b, Matcher.quoteReplacement(replacement))
-    }
     mth.appendTail(b)
     b.toString
   end processCrossLineDiff
@@ -598,25 +581,23 @@ object YamlDiffer:
     val markedLines = lines.map(_.matches(s"(?s).*($MARK_DELETE_LINE|$MARK_MODIFY_LINE|$MARK_ADD_LINE).*"))
     markedLines
       .zipWithIndex
-      .map{case (b, i) => b || markedLines.slice(i-aroundLines, i+aroundLines+1).contains(true)}
+      .map:
+        case (b, i) => b || markedLines.slice(i-aroundLines, i+aroundLines+1).contains(true)
       .zip(lines)
-      .foreach{ case (b, l) =>
-        if (b) {
-          resultLines.addOne(l)
-          hasSkipped = false
-        }
-        else {
-          if (!hasSkipped) {
+      .foreach:
+        case (b, l) =>
+          if b then
+            resultLines.addOne(l)
+            hasSkipped = false
+          else if !hasSkipped then
             resultLines.addOne("<skipped...>\n")
             hasSkipped = true
-          }
-        }
-      }
     resultLines.mkString("")
   end stripMultiLineDiff
 
 case class Args(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 target: Path = root/"dev"/"stdin",
+                dump: Option[Path] = None,
                 extraIgnoreFiles: List[String] = Nil,
                 extraIgnores: List[String] = Nil,
                 flags: Set[String] = Set(),
@@ -624,9 +605,8 @@ case class Args(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 multiLineAroundLines: Int = 8,
                 ignoreRules: IgnoreRules = Map(),
                ):
-  class Flags(flags: Set[String]) extends Dynamic {
+  class Flags(flags: Set[String]) extends Dynamic:
     def selectDynamic(name: String): Boolean = flags.contains(name)
-  }
   val debug: Flags = new Flags(debugFlags)
   val f: Flags = new Flags(flags)
 
@@ -635,13 +615,15 @@ object Args:
   def flagToToken(f: String) = "-([a-z])".r.replaceSomeIn(f, m => Some(m.group(1).toUpperCase))
   import scopt.OParser
   val builder = OParser.builder[Args]
-  val parser = {
+  val parser =
     import builder.{arg, _}
     OParser.sequence(
       programName("ydiff.sc"),
-      head("Yaml Diff"),
+      head("Yaml Diff YDIFF_VERSION"),
       help('h', "help")
         .text("Show this help."),
+      version('v', "version")
+        .text("Show version"),
       opt[Unit]("k8s")
         .text("Treat yaml docs as kubernetes resources.")
         .optional()
@@ -657,6 +639,10 @@ object Args:
         .text("Show complete yaml text of removed yaml docs.")
         .optional()
         .action(flagF("showRemoved")),
+      opt[Unit]("only-id")
+        .text("Show only IDs for changed/removed/added docs")
+        .optional()
+        .action(flagF("onlyId")),
       opt[Unit]("no-ignore")
         .text("Don't use default ignore list.(k8s only)")
         .action(flagF("noIgnore")),
@@ -675,30 +661,34 @@ object Args:
         .valueName("<file>")
         .optional()
         .action((p, a) => a.copy(extraIgnoreFiles = a.extraIgnoreFiles.appended(p))),
+      opt[String]("dump")
+        .text("Dump file name, if set, the resource of k8s source will be dumped to the file")
+        .valueName("<file>")
+        .optional()
+        .action((p, a) => a.copy(dump = Some(oPath(p)))),
       opt[String]('d', "debug")
         .hidden()
         .action((d, a) => a.copy(debugFlags = a.debugFlags.+(flagToToken(d)))),
       arg[String]("source")
-        .text("Source yaml file, specify \"<k8s>\" to fetch resource\nfrom kubernetes cluster, and default to be <k8s>.")
+        .text("Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.")
         .optional()
-        .action((f, a) => a.copy(source = new YamlDocs.Static(read(oPath(f)), a.f.k8s))),
+        .action: (f, a) =>
+          val docs =
+            if f == "k8s" then YamlDocs.FromK8s
+            else new YamlDocs.Static(read(oPath(f)), a.f.k8s)
+          a.copy(source = docs)
+        ,
       arg[String]("target")
         .text("Target yaml file, default to be stdin.")
         .optional()
         .action((f, a) => a.copy(target = if (f.equals("-")) root/"dev"/"stdin" else oPath(f))),
-      checkConfig {
+      checkConfig:
         case a if a.source.isInstanceOf[YamlDocs.FromK8s.type] && !a.f.k8s => failure("You should add --k8s option when the source is kubernetes cluster.")
+        case a if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")
         case _ => success
-      }
     )
-  }
-
-import mainargs.{main, arg, ParserForMethods, Leftover}
-@main
-def main(rest: Leftover[String]) =
-  scopt.OParser.parse(Args.parser, rest.value, Args()) match {
-    case Some(args) =>
-      YamlDiffer.doDiff(using args)
-    case _ =>
-  }
-end main
+  // end val
+scopt.OParser.parse(Args.parser, args, Args()) match
+  case Some(a) =>
+    YamlDiffer.doDiff(using a)
+  case _ =>

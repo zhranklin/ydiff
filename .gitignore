@@ -1,4 +1,7 @@
 .idea/
 .metals/
 .ammonite/
+.bsp/
+.scala-build/
+builds/
 *.iml

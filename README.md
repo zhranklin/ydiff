@@ -11,7 +11,7 @@ The yaml diff tool.
 3. install ydiff
     ```
     tag=$(curl https://api.github.com/repos/zhranklin/ydiff/releases/latest -s|grep tag_name|sed 's/.*tag_name": "//g; s/",.*//g')
-    sudo sh -c "wget -O - https://github.com/zhranklin/ydiff/archive/$tag.tar.gz | tar xzO ydiff-$tag/ydiff > /usr/local/bin/ydiff && chmod +x /usr/local/bin/ydiff"
+    sudo sh -c "wget -O - https://github.com/zhranklin/ydiff/archive/$tag.tar.gz | tar xzO ydiff-$tag/ydiff.sc > /usr/local/bin/ydiff && chmod +x /usr/local/bin/ydiff"
     ```
 
 **Tips**: Ammonite will fetch dependencies (by coursier) when you use ydiff first time, which takes a few minutes.
