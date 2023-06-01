@@ -1,17 +1,17 @@
-#!/usr/bin/env -S scala-cli shebang --suppress-outdated-dependency-warning
+#!/usr/bin/env -S scala-cli shebang
 //> using scala "3.3.0"
 
 
 //> using dep "com.zhranklin:scala-tricks_2.13:0.2.1"
 //> using dep "com.lihaoyi:ammonite-ops_2.13:2.4.0-23-76673f7f"
-//> using dep "com.flipkart.zjsonpatch:zjsonpatch:0.4.11"
+//> using dep "com.flipkart.zjsonpatch:zjsonpatch:0.4.14"
 //> using dep "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.11"
 //> using dep "com.lihaoyi::os-lib:0.8.0"
 //> using dep "org.springframework:spring-core:5.1.7.RELEASE"
-//> using dep "org.fusesource.jansi:jansi:2.2.0"
-//> using dep "io.github.java-diff-utils:java-diff-utils:4.5"
-//> using dep "com.github.scopt::scopt:4.0.1"
-//> using dep "org.scala-lang.modules::scala-parser-combinators:2.1.1"
+//> using dep "org.fusesource.jansi:jansi:2.4.0"
+//> using dep "io.github.java-diff-utils:java-diff-utils:4.12"
+//> using dep "com.github.scopt::scopt:4.1.0"
+//> using dep "org.scala-lang.modules::scala-parser-combinators:2.3.0"
 
 import java.io.File
 import scala.collection.mutable
@@ -409,15 +409,15 @@ object YamlDocs:
   end read
 
 import ammonite.ops._
-object YamlDiffer:
+class YamlDiffer(inline: Boolean):
   import DiffFlags._
   val DIFF_FLAGS = java.util.EnumSet.of(OMIT_MOVE_OPERATION, OMIT_COPY_OPERATION, ADD_ORIGINAL_VALUE_ON_REPLACE)
   val diffRowGenerator = DiffRowGenerator.create()
-    .showInlineDiffs(false)
-    .inlineDiffByWord(false)
+    .showInlineDiffs(inline)
+    .inlineDiffByWord(inline)
     .oldTag(f => if (f) c.TAG_DELETE else c.TAG_END)
     .newTag(f => if (f) c.TAG_ADD else c.TAG_END)
-    .mergeOriginalRevised(true)
+    .mergeOriginalRevised(inline)
     .lineNormalizer(identity)
     .build()
   def generateDiffText(from: JsonNode, to: JsonNode) =
@@ -428,12 +428,19 @@ object YamlDiffer:
       .flatMap: l =>
         import c._, l._
         import com.github.difflib.text.DiffRow.Tag
-        val mode = getTag match
-          case Tag.INSERT => MARK_ADD_LINE
-          case Tag.DELETE => MARK_DELETE_LINE
-          case Tag.CHANGE => MARK_MODIFY_LINE
-          case Tag.EQUAL => ""
-        List(s"$mode$getOldLine")
+        if inline then
+          val mode = getTag match
+            case Tag.INSERT => MARK_ADD_LINE
+            case Tag.DELETE => MARK_DELETE_LINE
+            case Tag.CHANGE => MARK_MODIFY_LINE
+            case Tag.EQUAL => ""
+          List(s"$mode$getOldLine")
+        else getTag match
+          case Tag.INSERT => List(s"$MARK_ADD_LINE$TAG_ADD$getNewLine$TAG_END")
+          case Tag.DELETE => List(s"$MARK_DELETE_LINE$TAG_DELETE$getOldLine$TAG_END")
+          case Tag.CHANGE =>
+            List(s"$MARK_DELETE_LINE$TAG_DELETE$getOldLine$TAG_END", s"$MARK_ADD_LINE$TAG_ADD$getNewLine$TAG_END")
+          case Tag.EQUAL => List(getOldLine)
       .mkString("\n")
   end generateDiffText
 
@@ -481,8 +488,7 @@ object YamlDiffer:
                       val processed = stripMultiLineDiff(processCrossLineDiff(diffText))
                       //                    println(processed.split("\n").map("$$$" + _).mkString("\n"))
                       setValue(result, path, JsonNodeFactory.instance.textNode(processed))
-                    case (from, to)
-                      if from.getNodeType == to.getNodeType && !Set(ARRAY, OBJECT, POJO).contains(from.getNodeType) =>
+                    case (from, to) if inline && from.getNodeType == to.getNodeType && !Set(ARRAY, OBJECT, POJO).contains(from.getNodeType) =>
                       val rawdiff = generateDiffText(from, to)
                       val o = rawdiff.replaceAll(s"^$MARK_DELETE_LINE|^$MARK_ADD_LINE|^$MARK_MODIFY_LINE", "")
                       val mode = rawdiff.replaceAll(s"(^$MARK_DELETE_LINE|^$MARK_ADD_LINE|^$MARK_MODIFY_LINE|).*", "$1")
@@ -521,20 +527,21 @@ object YamlDiffer:
           else if (ind <= indent && line.trim.nonEmpty)
             indent = 0
             lineTemplate = " $1$2"
-          if (args.debug.unrendered)
+          if args.debug.unrendered then
             println(line + "<unrendered>")
+            println(s"<line-template>: $lineTemplate")
           if (line != "---") println:
             if (line.isEmpty) ""
             else if (lineTemplate == " $1$2") line
-              .replaceAll(s"^.(\\s*)$MARK_DELETE_LINE(.*)", s"$MINUS$$1$$2")
-              .replaceAll(s"^.(\\s*)$MARK_ADD_LINE(.*)", s"$PLUS$$1$$2")
-              .replaceAll(s"^.(\\s*)$MARK_MODIFY_LINE(.*)", s"$TILDE$$1$$2")
+              .replaceAll(s"^.?(\\s*)$MARK_DELETE_LINE(.*)", s"$MINUS$$1$$2")
+              .replaceAll(s"^.?(\\s*)$MARK_ADD_LINE(.*)", s"$PLUS$$1$$2")
+              .replaceAll(s"^.?(\\s*)$MARK_MODIFY_LINE(.*)", s"$TILDE$$1$$2")
               .replaceAll(TAG_DELETE, DELETE)
               .replaceAll(TAG_ADD, ADD)
               .replaceAll(TAG_END, RESET)
             else line
               .replaceAll(s"($MARK_DELETE_FIELD|$MARK_ADD_FIELD):", ":")
-              .replaceAll(".( *)(.*)", lineTemplate)
+              .replaceAll(" ?( *)(.+)", lineTemplate)
         print(RESET)
   end doDiff
 
@@ -646,6 +653,9 @@ object Args:
       opt[Unit]("no-ignore")
         .text("Don't use default ignore list.(k8s only)")
         .action(flagF("noIgnore")),
+      opt[Unit]("no-inline")
+        .text("Show diff line by line.")
+        .action(flagF("noInline")),
       opt[Int]('m', "multi-lines-around")
         .text("How many lines should be printed before and after\nthe diff line in multi-line string")
         .valueName("<lines>")
@@ -690,5 +700,5 @@ object Args:
   // end val
 scopt.OParser.parse(Args.parser, args, Args()) match
   case Some(a) =>
-    YamlDiffer.doDiff(using a)
+    new YamlDiffer(!a.f.noInline).doDiff(using a)
   case _ =>
