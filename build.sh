@@ -30,6 +30,13 @@ if git diff-index --quiet HEAD --; then
 else
   tag=$(git rev-parse --short HEAD)-dirty
 fi
+
+if [[ $mode = "--assembly" ]]; then
+  tag="$tag Universal Version (on Java)"
+else
+  tag="$tag For $(uname -sm) (via GraalVM Native Image)"
+fi
+
 mkdir -p builds
 out=builds/ydiff$postfix
 rm -f $out $out.tar.gz

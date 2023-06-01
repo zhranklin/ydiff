@@ -625,7 +625,7 @@ object Args:
   val parser =
     import builder.{arg, _}
     OParser.sequence(
-      programName("ydiff.sc"),
+      programName("ydiff"),
       head("Yaml Diff YDIFF_VERSION"),
       help('h', "help")
         .text("Show this help."),
@@ -679,7 +679,7 @@ object Args:
       opt[String]('d', "debug")
         .hidden()
         .action((d, a) => a.copy(debugFlags = a.debugFlags.+(flagToToken(d)))),
-      arg[String]("source")
+      arg[String]("source-file")
         .text("Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.")
         .optional()
         .action: (f, a) =>
@@ -688,7 +688,7 @@ object Args:
             else new YamlDocs.Static(read(oPath(f)), a.f.k8s)
           a.copy(source = docs)
         ,
-      arg[String]("target")
+      arg[String]("target-file")
         .text("Target yaml file, default to be stdin.")
         .optional()
         .action((f, a) => a.copy(target = if (f.equals("-")) root/"dev"/"stdin" else oPath(f))),
