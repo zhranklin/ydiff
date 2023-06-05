@@ -5,3 +5,4 @@
 .scala-build/
 builds/
 *.iml
+.DS_Store

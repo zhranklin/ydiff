@@ -1,39 +1,43 @@
 #!/usr/bin/env -S scala-cli shebang
-//> using scala "3.3.0"
-
-
-//> using dep "com.zhranklin:scala-tricks_2.13:0.2.1"
-//> using dep "com.lihaoyi:ammonite-ops_2.13:2.4.0-23-76673f7f"
-//> using dep "com.flipkart.zjsonpatch:zjsonpatch:0.4.14"
-//> using dep "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.11"
-//> using dep "com.lihaoyi::os-lib:0.8.0"
-//> using dep "org.springframework:spring-core:5.1.7.RELEASE"
-//> using dep "org.fusesource.jansi:jansi:2.4.0"
-//> using dep "io.github.java-diff-utils:java-diff-utils:4.12"
-//> using dep "com.github.scopt::scopt:4.1.0"
-//> using dep "org.scala-lang.modules::scala-parser-combinators:2.3.0"
+//> using scala 3.3.0
+//> using dep com.zhranklin::scala-tricks:0.2.2
+//> using dep com.flipkart.zjsonpatch:zjsonpatch:0.4.14
+//> using dep com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.3
+//> using dep com.lihaoyi::os-lib:0.8.0
+//> using dep io.github.azagniotov:ant-style-path-matcher:1.0.0
+//> using dep org.fusesource.jansi:jansi:2.4.0
+//> using dep io.github.java-diff-utils:java-diff-utils:4.12
+//> using dep com.github.scopt::scopt:4.1.0
+//> using dep org.scala-lang.modules::scala-parser-combinators:2.3.0
 
 import java.io.File
 import scala.collection.mutable
 import scala.collection.MapView
+import scala.language.dynamics._
 
-import ammonite.ops.ShelloutException
 import com.fasterxml.jackson.databind.node.{ArrayNode, JsonNodeFactory, ObjectNode, TextNode, MissingNode}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.flipkart.zjsonpatch.{DiffFlags, JsonDiff}
 import com.github.difflib.text.DiffRowGenerator
-import io.circe.Json
 import zrkn.op._
-import org.springframework.util.AntPathMatcher
 import com.fasterxml.jackson.databind.node.NullNode
 import java.util.regex.Matcher
 import scala.language.dynamics
 
 import scala.jdk.CollectionConverters._
+import io.github.azagniotov.matcher.AntPathMatcher;
 
 import java.util.regex.Pattern
 import scala.util.boundary, boundary.break
+
+import zrkn.op.given
+import os.{root, read}
+import os.Path
+import Path.expandUser
+import scala.util.Try
+
+val jsonMapper = new ObjectMapper
 
 def groups(str: String) = "\\(".r.findAllIn(str).size - """\(\?([idmsuxU=>!:]|<[!=])""".r.findAllIn(str).size
 class Interped(sc: StringContext):
@@ -229,7 +233,7 @@ object Models:
   case class DocID(id: String, `tpe`: String = "Yaml Doc"):
     override def toString: String = s"$tpe $id"
   class GVK(val kind: String, val name: String, val namespace: String) extends DocID(s"$kind/$name${if(namespace.isEmpty)""else s".$namespace"}", "K8s Resource")
-  case class YamlDoc(yaml: String, tree: JsonNode, obj: Json, id: DocID)
+  case class YamlDoc(yaml: String, tree: JsonNode, id: DocID)
 
   trait Changes:
     def sorting: String
@@ -295,11 +299,11 @@ object YamlDocs:
       case _ => None
     def get(gvk: GVK)(using args: Args): Option[YamlDoc] =
       import gvk._
-      try
-        YamlDocs.read(ammonite.ops.%%("bash", "-c", s"kubectl get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}")(wd).out.string, true, None)
-      catch
-        case e: ShelloutException if e.result.err.string.contains("(NotFound)")
-          || e.result.err.string.contains("doesn't have a resource type") => None
+      val result = !.bash.`-c`.__(s"kubectl get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}").!
+      if result.exitCode != 1 && result.err.text().contains("(NotFound)") || result.err.text().contains("doesn't have a resource type") then
+        None
+      else
+        YamlDocs.read(result.out.text(), true, None)
     end get
 
   class Static(src: => String, isK8s: => Boolean) extends SourceDatabase:
@@ -323,10 +327,10 @@ object YamlDocs:
           .flatMap: kv =>
             kv.getValue match
               case v: TextNode =>
-                io.circe.yaml.parser.parse(v.textValue()).toOption
+                Try(new ObjectMapper(new YAMLFactory).readTree(v.textValue())).toOption
                   .filter(_.isObject)
-                  .map: _ =>
-                    (kv.getKey, new ObjectMapper(new YAMLFactory).readTree(v.textValue()))
+                  .map: o =>
+                    (kv.getKey, o)
               case v: ObjectNode =>
                 expandTextToYaml(v)
                 None
@@ -336,10 +340,10 @@ object YamlDocs:
       case _ =>
   end expandTextToYaml
 
-  val pathMatcher = new AntPathMatcher()
+  val pathMatcher = (new AntPathMatcher.Builder).build()
   def removeIgnoredFields(root: JsonNode, node: JsonNode, path: String, defaults: List[(String, ValueMatcher)])(using args: Args): Boolean =
     val shouldIgnore = defaults.exists:
-      case pt -> expect => pathMatcher.`match`(pt, path) && expect.matches(root, path, node)
+      case pt -> expect => pathMatcher.isMatch(pt, path) && expect.matches(root, path, node)
     node match
       case _ if shouldIgnore =>
         if (args.debug.ignore)
@@ -372,7 +376,7 @@ object YamlDocs:
   def read(yaml: String, k8s: Boolean, index: Option[Int])(using args: Args): Option[YamlDoc] = boundary:
     if (yaml.trim.isEmpty) break(None)
     import scala.util
-    util.Try:
+    Try:
       val tree = new ObjectMapper(new YAMLFactory).readTree(yaml)
       if tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode] then
         throw RuntimeException("EMPTY_OBJECT")
@@ -381,34 +385,28 @@ object YamlDocs:
         removeIgnoredFields(tree, tree, "", args.ignoreRules.getOrElse(kind, Nil) ::: args.ignoreRules.getOrElse("*", Nil))
       if args.f.expandText then
         expandTextToYaml(tree)
-      val obj = io.circe.yaml.parser.parse(new ObjectMapper(new YAMLFactory).writeValueAsString(tree)) match
-        case Left(value) =>
-          throw value.underlying
-        case Right(value) =>
-          value
       val id =
         if (k8s) then
-          import io.circe.optics.JsonPath.root
-          val name = root.metadata.name.string.getOption(obj).get
-          val namespace = root.metadata.namespace.string.getOption(obj).getOrElse("")
-          val kind = root.kind.string.getOption(obj).get
+          val name = tree.get("metadata").get("name").asText
+          val namespace = Try(tree.get("metadata").get("namespace").asText).toOption.getOrElse("")
+          val kind = tree.get("kind").asText
           new GVK(kind, name, namespace)
         else DocID(index.get.toString)
-      Models.YamlDoc(yaml, tree, obj, id)
+      Models.YamlDoc(yaml, tree, id)
     .recoverWith[YamlDoc]:
       case t: RuntimeException if t.getMessage == "EMPTY_OBJECT" =>
         util.Failure(t)
       case t =>
-        io.circe.yaml.parser.parse(yaml) match
-          case Right(Json.False) =>
-          case _ =>
+        try
+          (new ObjectMapper(new YAMLFactory)).readTree(yaml)
+        catch
+          case t =>
             println(yaml)
             t.printStackTrace();
         util.Failure(t)
     .toOption
   end read
 
-import ammonite.ops._
 class YamlDiffer(inline: Boolean):
   import DiffFlags._
   val DIFF_FLAGS = java.util.EnumSet.of(OMIT_MOVE_OPERATION, OMIT_COPY_OPERATION, ADD_ORIGINAL_VALUE_ON_REPLACE)
@@ -447,7 +445,7 @@ class YamlDiffer(inline: Boolean):
   def doDiff(using _args: Args): Unit =
     import Models.{NewResource, RemovedResource, DiffResource, DiffResourceJsonPatch}
     given args: Args = _args.copy(
-      ignoreRules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => _args.f.noIgnore) ::: _args.extraIgnores ::: _args.extraIgnoreFiles.map(p => read(oPath(p))))
+      ignoreRules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => _args.f.noIgnore) ::: _args.extraIgnores ::: _args.extraIgnoreFiles.map(p => read(expandUser(p))))
     )
     if (args.debug.ignoreRules)
       println(args.ignoreRules.toString().replaceAll(", ", ",\n"))
@@ -675,7 +673,7 @@ object Args:
         .text("Dump file name, if set, the resource of k8s source will be dumped to the file")
         .valueName("<file>")
         .optional()
-        .action((p, a) => a.copy(dump = Some(oPath(p)))),
+        .action((p, a) => a.copy(dump = Some(expandUser(p)))),
       opt[String]('d', "debug")
         .hidden()
         .action((d, a) => a.copy(debugFlags = a.debugFlags.+(flagToToken(d)))),
@@ -685,13 +683,13 @@ object Args:
         .action: (f, a) =>
           val docs =
             if f == "k8s" then YamlDocs.FromK8s
-            else new YamlDocs.Static(read(oPath(f)), a.f.k8s)
+            else new YamlDocs.Static(read(expandUser(f)), a.f.k8s)
           a.copy(source = docs)
         ,
       arg[String]("target-file")
         .text("Target yaml file, default to be stdin.")
         .optional()
-        .action((f, a) => a.copy(target = if (f.equals("-")) root/"dev"/"stdin" else oPath(f))),
+        .action((f, a) => a.copy(target = if (f.equals("-")) root/"dev"/"stdin" else expandUser(f))),
       checkConfig:
         case a if a.source.isInstanceOf[YamlDocs.FromK8s.type] && !a.f.k8s => failure("You should add --k8s option when the source is kubernetes cluster.")
         case a if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")

@@ -17,7 +17,7 @@ case "$(uname -sm)" in
   Windows*\ *64)   postfix=_windows_amd64    ;;
 esac
 if [[ $1 == "noarch" ]]; then
-  mode="--assembly"
+  mode="--assembly --jvm 8"
   postfix=_noarch
 fi
 
@@ -31,7 +31,7 @@ else
   tag=$(git rev-parse --short HEAD)-dirty
 fi
 
-if [[ $mode = "--assembly" ]]; then
+if [[ $1 = "noarch" ]]; then
   tag="$tag Universal Version (on Java)"
 else
   tag="$tag For $(uname -sm) (via GraalVM Native Image)"
