@@ -674,6 +674,9 @@ case class Args(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
   val f: Flags = new Flags(flags)
 
 object Args:
+  import org.fusesource.jansi.Ansi.{Color, ansi, Attribute}
+  val param = ansi().fg(Color.CYAN).a(Attribute.INTENSITY_BOLD).toString()
+  val reset = ansi().reset().toString()
   extension (p: scopt.OParser[Unit, Args]) def flagF(f: String) = p.action((_, a) => a.copy(flags = a.flags.+(flagToToken(f))))
   def flagToToken(f: String) = "-([a-z])".r.replaceSomeIn(f, m => Some(m.group(1).toUpperCase))
   import scopt.OParser
@@ -682,56 +685,56 @@ object Args:
     import builder.{arg, _}
     OParser.sequence(
       programName("ydiff"),
-      head("Yaml Diff YDIFF_VERSION"),
+      head("Yaml Diff YDIFF_VERSION"+param),
       help('h', "help")
-        .text("Show this help."),
+        .text(reset+"Show this help."+param),
       version('v', "version")
-        .text("Show version"),
+        .text(reset+"Show version"+param),
       opt[Unit]("k8s")
-        .text("Treat yaml docs as kubernetes resources.")
+        .text(reset+"Treat yaml docs as kubernetes resources."+param)
         .optional()
         .flagF("k8s"),
       opt[Unit]("json-patch")
-        .text("Show kubectl patch commands.(k8s only)")
+        .text(reset+"Show kubectl patch commands.(k8s only)"+param)
         .flagF("jsonPatch"),
       opt[Unit]("show-new")
-        .text("Show complete yaml text of new yaml docs.")
+        .text(reset+"Show complete yaml text of new yaml docs."+param)
         .optional()
         .flagF("showNew"),
       opt[Unit]("show-removed")
-        .text("Show complete yaml text of removed yaml docs.")
+        .text(reset+"Show complete yaml text of removed yaml docs."+param)
         .optional()
         .flagF("showRemoved"),
       opt[Unit]("only-id")
-        .text("Show only IDs for changed/removed/added docs")
+        .text(reset+"Show only IDs for changed/removed/added docs"+param)
         .optional()
         .flagF("onlyId"),
       opt[Unit]("no-ignore")
-        .text("Don't use default ignore list.(k8s only)")
+        .text(reset+"Don't use default ignore list.(k8s only)"+param)
         .flagF("noIgnore"),
       opt[Unit]("no-inline")
-        .text("Show diff line by line.")
+        .text(reset+"Show diff line by line."+param)
         .flagF("noInline"),
       opt[Int]('m', "multi-lines-around")
-        .text("How many lines should be printed before and after\nthe diff line in multi-line string")
+        .text(reset+"How many lines should be printed before and after\nthe diff line in multi-line string"+param)
         .valueName("<lines>")
         .optional()
         .action: (l, a) =>
           a.copy(multiLineAroundLines = l),
       opt[String]("extra-rules")
-        .text("Extra rules, can be specified multiple times.")
+        .text(reset+"Extra rules, can be specified multiple times."+param)
         .valueName("<rule-text>")
         .optional()
         .action: (i, a) =>
           a.copy(extraRules = a.extraRules.appended(i)),
       opt[String]("extra-rule-file")
-        .text("Extra rules file, can be specified multiple times.")
+        .text(reset+"Extra rules file, can be specified multiple times."+param)
         .valueName("<file>")
         .optional()
         .action: (p, a) =>
           a.copy(extraRuleFiles = a.extraRuleFiles.appended(p)),
       opt[String]("dump")
-        .text("Dump file name, if set, the resource of k8s source will be dumped to the file")
+        .text(reset+"Dump file name, if set, the resource of k8s source will be dumped to the file"+param)
         .valueName("<file>")
         .optional()
         .action: (p, a) =>
@@ -741,7 +744,7 @@ object Args:
         .action: (d, a) =>
           a.copy(debugFlags = a.debugFlags.+(flagToToken(d))),
       arg[String]("source-file")
-        .text("Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.")
+        .text(reset+"Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s."+param)
         .optional()
         .action: (f, a) =>
           val docs =
@@ -749,7 +752,7 @@ object Args:
             else new YamlDocs.Static(read(getPath(f)), a.f.k8s)
           a.copy(source = docs),
       arg[String]("target-file")
-        .text("Target yaml file, default to be stdin.")
+        .text(reset+"Target yaml file, default to be stdin.")
         .optional()
         .action: (f, a) =>
           a.copy(target = if f.equals("-") then root/"dev"/"stdin" else getPath(f)),
