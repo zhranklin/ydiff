@@ -35,6 +35,7 @@ import zrkn.op.given
 import os.{root, read}
 import os.Path
 import scala.util.Try
+import scala.collection.mutable.ListBuffer
 
 val jsonMapper = new ObjectMapper
 
@@ -464,7 +465,8 @@ object YamlDocs:
     .toOption
   end read
 
-class YamlDiffer(inline: Boolean):
+class YamlDiffer(using args: Args):
+  val inline = !args.f.noInline
   import DiffFlags._
   val DIFF_FLAGS = java.util.EnumSet.of(OMIT_MOVE_OPERATION, OMIT_COPY_OPERATION, ADD_ORIGINAL_VALUE_ON_REPLACE)
   val diffRowGenerator = DiffRowGenerator.create()
@@ -499,9 +501,8 @@ class YamlDiffer(inline: Boolean):
       .mkString("\n")
   end generateDiffText
 
-  def doDiff(using _args: Args): Unit =
+  def doDiff: Unit =
     import Models.{NewResource, RemovedResource, DiffResource, DiffResourceJsonPatch}
-    given args: Args = _args.copy(rules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => _args.f.noIgnore) ::: _args.extraRules ::: _args.extraRuleFiles.map(p => read(getPath(p)))))
     if args.debug.rules then
       println(args.rules.toString().replaceAll(", ", ",\n"))
     val targetDocs = new YamlDocs.Static(read(args.target), args.f.k8s).sourceObjs.values
@@ -551,7 +552,7 @@ class YamlDiffer(inline: Boolean):
                       setValue(result, s"$path$MARK_DELETE_FIELD", from)
                       setValue(result, s"$path$MARK_ADD_FIELD", to)
             List(result).filterNot(_.isEmpty()).map(DiffResource(target.id, _, !args.f.onlyId)) ++
-            List(patch).filter(_ => _args.f.jsonPatch).filterNot(_.isEmpty).map(DiffResourceJsonPatch(target.id, target.tree, _))
+            List(patch).filter(_ => args.f.jsonPatch).filterNot(_.isEmpty).map(DiffResourceJsonPatch(target.id, target.tree, _))
       .toList
       .++ {
         args.source match
@@ -667,11 +668,16 @@ case class Args(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 debugFlags: Set[String] = Set(),
                 multiLineAroundLines: Int = 8,
                 rules: Rules = Map(),
+                mergeFiles: List[Path] = Nil,
                ):
   class Flags(flags: Set[String]) extends Dynamic:
     def selectDynamic(name: String): Boolean = flags.contains(name)
   val debug: Flags = new Flags(debugFlags)
   val f: Flags = new Flags(flags)
+  def processDefault: Args = this.copy(
+    rules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filterNot(_ => f.noIgnore) ::: extraRules ::: extraRuleFiles.map(p => read(getPath(p)))),
+    flags = if source.isInstanceOf[YamlDocs.FromK8s.type] then flags.+("k8s") else flags
+  )
 
 object Args:
   import org.fusesource.jansi.Ansi.{Color, ansi, Attribute}
@@ -681,88 +687,143 @@ object Args:
   def flagToToken(f: String) = "-([a-z])".r.replaceSomeIn(f, m => Some(m.group(1).toUpperCase))
   import scopt.OParser
   val builder = OParser.builder[Args]
-  val parser =
+  extension (p: String) def zh(z: String): String = 
+    if (System.getProperty("ydiffLang") == "zh") z
+    else p
+  def parser =
     import builder.{arg, _}
     OParser.sequence(
       programName("ydiff"),
-      head("Yaml Diff YDIFF_VERSION"+param),
+      head("YAML Diff".zh("Yaml对比工具")+" YDIFF_VERSION"+param),
       help('h', "help")
-        .text(reset+"Show this help."+param),
+        .text(reset+"Show this help.".zh("显示帮助文档")+param),
       version('v', "version")
-        .text(reset+"Show version"+param),
-      opt[Unit]("k8s")
-        .text(reset+"Treat yaml docs as kubernetes resources."+param)
-        .optional()
-        .flagF("k8s"),
-      opt[Unit]("json-patch")
-        .text(reset+"Show kubectl patch commands.(k8s only)"+param)
-        .flagF("jsonPatch"),
-      opt[Unit]("show-new")
-        .text(reset+"Show complete yaml text of new yaml docs."+param)
-        .optional()
-        .flagF("showNew"),
-      opt[Unit]("show-removed")
-        .text(reset+"Show complete yaml text of removed yaml docs."+param)
-        .optional()
-        .flagF("showRemoved"),
-      opt[Unit]("only-id")
-        .text(reset+"Show only IDs for changed/removed/added docs"+param)
-        .optional()
-        .flagF("onlyId"),
-      opt[Unit]("no-ignore")
-        .text(reset+"Don't use default ignore list.(k8s only)"+param)
-        .flagF("noIgnore"),
-      opt[Unit]("no-inline")
-        .text(reset+"Show diff line by line."+param)
-        .flagF("noInline"),
-      opt[Int]('m', "multi-lines-around")
-        .text(reset+"How many lines should be printed before and after\nthe diff line in multi-line string"+param)
-        .valueName("<lines>")
-        .optional()
+        .text(reset+"Show version".zh("显示版本")+param),
+      opt[String]('l', "lang")
+        .text(reset+"Choose language(zh/en)|选择语言(zh/en)"+param)
+        .valueName("<language>")
         .action: (l, a) =>
-          a.copy(multiLineAroundLines = l),
-      opt[String]("extra-rules")
-        .text(reset+"Extra rules, can be specified multiple times."+param)
-        .valueName("<rule-text>")
-        .optional()
-        .action: (i, a) =>
-          a.copy(extraRules = a.extraRules.appended(i)),
-      opt[String]("extra-rule-file")
-        .text(reset+"Extra rules file, can be specified multiple times."+param)
-        .valueName("<file>")
-        .optional()
-        .action: (p, a) =>
-          a.copy(extraRuleFiles = a.extraRuleFiles.appended(p)),
-      opt[String]("dump")
-        .text(reset+"Dump file name, if set, the resource of k8s source will be dumped to the file"+param)
-        .valueName("<file>")
-        .optional()
-        .action: (p, a) =>
-          a.copy(dump = Some(getPath(p))),
-      opt[String]('d', "debug")
-        .hidden()
-        .action: (d, a) =>
-          a.copy(debugFlags = a.debugFlags.+(flagToToken(d))),
-      arg[String]("source-file")
-        .text(reset+"Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s."+param)
-        .optional()
-        .action: (f, a) =>
-          val docs =
-            if f == "k8s" then YamlDocs.FromK8s
-            else new YamlDocs.Static(read(getPath(f)), a.f.k8s)
-          a.copy(source = docs),
-      arg[String]("target-file")
-        .text(reset+"Target yaml file, default to be stdin.")
-        .optional()
-        .action: (f, a) =>
-          a.copy(target = if f.equals("-") then root/"dev"/"stdin" else getPath(f)),
+          System.setProperty("ydiffLang", l)
+          System.setProperty("helpFlag", "true")
+          a,
+      note(""),
+      cmd("diff")
+        .text(reset+"The default command. Run the YAML diff".zh("(默认)运行YAML对比工具")+param)
+        .children(
+          opt[Unit]("k8s")
+            .text(reset+"Treat yaml docs as kubernetes resources.".zh("将输入当做Kubernetes资源处理。")+param)
+            .optional()
+            .flagF("k8s"),
+          opt[Unit]("json-patch")
+            .text(reset+"Print kubectl patch commands(k8s only).".zh("输出kubectl patch命令(仅k8s模式)。")+param)
+            .flagF("jsonPatch"),
+          opt[Unit]("show-new")
+            .text(reset+"Show complete yaml text of new yaml docs.".zh("完整输出新增的YAML。")+param)
+            .optional()
+            .flagF("showNew"),
+          opt[Unit]("show-removed")
+            .text(reset+"Show complete yaml text of removed yaml docs.".zh("完成输出删除的YAML。")+param)
+            .optional()
+            .flagF("showRemoved"),
+          opt[Unit]("only-id")
+            .text(reset+"Show only IDs for changed/removed/added docs".zh("对于所有的修改/删除/新增YAML, 只输出ID。")+param)
+            .optional()
+            .flagF("onlyId"),
+          opt[Unit]("no-ignore")
+            .text(reset+"Don't use default ignore list(k8s only).".zh("不使用默认的规则列表(仅k8s模式)。")+param)
+            .flagF("noIgnore"),
+          opt[Unit]("no-inline")
+            .text(reset+"Show diff line by line."+param)
+            .flagF("noInline"),
+          opt[Int]('m', "multi-lines-around")
+            .text(reset+"How many lines should be printed before and after\nthe diff line in multi-line string".zh("跨行字符串中, 差异文本上下保留的行数。")+param)
+            .valueName("<lines>")
+            .optional()
+            .action: (l, a) =>
+              a.copy(multiLineAroundLines = l),
+          opt[String]("extra-rules")
+            .text(reset+"Extra rules, can be specified multiple times.".zh("额外的过滤规则, 可多次指定(仅k8s模式)。")+param)
+            .valueName("<rule-text>")
+            .optional()
+            .action: (i, a) =>
+              a.copy(extraRules = a.extraRules.appended(i)),
+          opt[String]("extra-rule-file")
+            .text(reset+"Extra rules file, can be specified multiple times.".zh("额外的过滤规则文件, 可多次指定(仅k8s模式)。")+param)
+            .valueName("<file>")
+            .optional()
+            .action: (p, a) =>
+              a.copy(extraRuleFiles = a.extraRuleFiles.appended(p)),
+          opt[String]("dump")
+            .text(reset+"Dump file name, if set, the resource of k8s source will be dumped to the file".zh("备份的文件名, 设置后将备份导出源yaml(仅k8s模式)。")+param)
+            .valueName("<file>")
+            .optional()
+            .action: (p, a) =>
+              a.copy(dump = Some(getPath(p))),
+          opt[String]('d', "debug")
+            .hidden()
+            .action: (d, a) =>
+              a.copy(debugFlags = a.debugFlags.+(flagToToken(d))),
+          arg[String]("source-file")
+            .text(reset+"Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.".zh("来源文件名, 用k8s表示取自k8s集群, 默认为k8s。")+param)
+            .optional()
+            .action: (f, a) =>
+              val docs =
+                if f == "k8s" then YamlDocs.FromK8s
+                else new YamlDocs.Static(read(getPath(f)), a.f.k8s)
+              a.copy(source = docs),
+          arg[String]("target-file")
+            .text(reset+"Target yaml file, default to be stdin.".zh("目标文件名, 默认为标准输入。")+param)
+            .optional()
+            .action: (f, a) =>
+              a.copy(target = if f.equals("-") then root/"dev"/"stdin" else getPath(f)),
+        ),
+      note(""),
+      cmd("merge")
+        .text(reset+"Merge kubernetes resource files. ".zh("合并Kubernetes资源文件。")+ansi().fg(Color.RED).a(Attribute.INTENSITY_BOLD)
+          + "NOTICE: Resource with same ID will be replaced. The content will not be merged.".zh("注意: ID相同的资源会直接进行替换, 而不是合并")+reset+param)
+        .flagF("merge")
+        .flagF("k8s")
+        .children(
+          arg[String]("<files>...")
+            .text(reset+"File list to be merged".zh("需要合并的文件列表")+param)
+            .required()
+            .optional()
+            .minOccurs(1)
+            .unbounded()
+            .action: (f, a) =>
+              val file = if f.equals("-") then root/"dev"/"stdin" else getPath(f)
+              a.copy(mergeFiles = a.mergeFiles.appended(file)),
+        ),
+      note(reset),
       checkConfig:
-        case a if a.source.isInstanceOf[YamlDocs.FromK8s.type] && !a.f.k8s => failure("You should add --k8s option when the source is kubernetes cluster.")
         case a if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")
         case _ => success
     )
   // end val
-scopt.OParser.parse(Args.parser, args, Args()) match
+def doMerge(using a: Args) =
+      import Models._
+      a.mergeFiles
+        .map: f =>
+          new YamlDocs.Static(read(f), true).sourceObjs.toMap
+        .reduce(_++_)
+        .values
+        .foreach: doc =>
+          println("---")
+          println(doc.yaml)
+System.setProperty("ydiffLang", if Option(System.getenv("LANG")).exists(_.toUpperCase().contains("CN")) then "zh" else "en")
+scopt.OParser.runParser(Args.parser, args, Args()) // 仅用于根据--lang/-l选项设置帮助语言
+val processedArgs =
+  val result = ListBuffer.from(args)
+  if Set("diff", "merge").intersect(args.headOption.toSet).isEmpty then
+    result.insert(0, "diff")
+  if args.contains("--lang") || args.contains("-l") then
+    result.append("-h")
+  result.toList
+scopt.OParser.parse(Args.parser, processedArgs, Args()) match
   case Some(a) =>
-    new YamlDiffer(!a.f.noInline).doDiff(using a)
+    given Args = a.processDefault
+    if summon[Args].f.merge then
+      doMerge
+    else
+      new YamlDiffer().doDiff
   case _ =>
