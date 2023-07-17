@@ -816,7 +816,7 @@ val processedArgs =
   val result = ListBuffer.from(args)
   if Set("diff", "merge").intersect(args.headOption.toSet).isEmpty then
     result.insert(0, "diff")
-  if args.contains("--lang") || args.contains("-l") then
+  if (args.contains("--lang") || args.contains("-l")) && !args.contains("-h") && !args.contains("-v") then
     result.append("-h")
   result.toList
 scopt.OParser.parse(Args.parser, processedArgs, Args()) match
