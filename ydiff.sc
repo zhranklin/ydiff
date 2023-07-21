@@ -245,12 +245,6 @@ object KubectlExec:
   val source = getPath(System.getenv("YDIFF_KUBECTL_SOURCE"))
   val db = source / os.up / source.last.replaceFirst("((\\.yaml|\\.yml|)$)", ".modified$1")
   extension (p: M) def apply(key: String) = p.filter(_._1 == key).map(_._2)
-  def yqRes(a: M) =
-    var yq = s""".kind == "${a("arg").head}" and .metadata.name == "${a("arg")(1)}" """
-    a("namespace").headOption
-      .filter(_.nonEmpty)
-      .foreach(ns => yq += s""" and .metadata.namespace == "$ns" """)
-    yq
 
   def apply(a: M) =
     import Models._
@@ -276,33 +270,30 @@ object KubectlExec:
       .mkString("\n")
     os.write.over(db, result)
 
-  def get(a: M) =
-    val format = a("format").lastOption.getOrElse("")
-    if format != "" && format != "yaml" then
-      System.err.println(s"ERROR: format not supported: ${a("format").lastOption.get}.")
+  def getOrDelete(a: M, delete: Boolean) =
+    var notFound = true
+    val (kind, ns, name) = (a("arg").head, a("namespace").headOption.filter(_.nonEmpty), a("arg")(1))
+    val result =
+      new YamlDocs.Static(read(db), true).sourceObjs(using new ReadOption()).values
+        .filter: doc =>
+          val id = doc.id.asInstanceOf[Models.GVK]
+          val exists = id.kind == kind && id.name == name && ns.forall(_ == id.namespace)
+          if exists then notFound = false
+          delete ^ exists
+        .map(_.yaml)
+        .mkString("\n---\n")
+    if notFound then
+      System.err.println(s"Resource Not Found: ${Models.GVK(kind, ns.getOrElse(""), name)}")
       System.exit(1)
-    !.yq.__(s"select(${yqRes(a)})").__(db.toString) | !!! match
-      case res @ CommandResult(_, 0, _) =>
-        val text = res.out.text()
-        if text.contains("kind:") then
-          if format == "yaml" then println(text)
-          else println(s"Resource exists: ${yqRes(a)}")
-        else
-          System.err.println(s"Resource Not Found: ${yqRes(a)}")
-          System.exit(1)
-      case res =>
-        System.err.println(res.err)
-        System.exit(res.exitCode)
-
-  def delete(a: M) =
-    !.yq.__(s"select((${yqRes(a)}) | not)").__(db.toString).`-i` | !#
+    if delete then os.write.over(db,result)
+    else println(result)
 
   def kubectl(args: List[String]) =
     val a = KubectlParser.parse0(args.map(_.replaceAll(" ", "SSPPAACCEE")).mkString(" ")).map(tp => (tp._1, tp._2.replaceAll("SSPPAACCEE", " ")))
     println(s"# ${a.map(tp => tp._1 + "=" + tp._2).mkString(", ")}")
     a("cmd").head match
-      case "get" => get(a)
-      case "delete" => delete(a)
+      case "get" => getOrDelete(a, false)
+      case "delete" => getOrDelete(a, true)
       case "restore" => os.copy.over(source, db)
       case "replace" | "apply" | "create" => apply(a)
       case "print" => println(os.read(db))
