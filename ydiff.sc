@@ -222,15 +222,11 @@ object KubectlParser extends scala.util.parsing.combinator.RegexParsers:
   val nonSpace = "[^ ]+".r
   type M = List[(String, String)]
   type PM = Parser[M]
-  def args0 = cmd ~! arg.* ^^ {case c~a => c::a}
-  def args1 = arg.* ~ cmd ~! arg.* ^^ {case a1~c~a2 => a1.appended(c).++(a2)}
-  def args: PM = (args0 | args1) ^^ { _.fold(List.empty[(String, String)])(_++_) }
-  def arg: PM = nsOpt | fileOpt | oyaml | normalArg
-  def cmd: PM = ("get" | "restore" | "replace" | "delete" | "apply" | "print" | "create") ^^ { cmd => List("cmd" -> cmd) }
-  def normalArg: PM = nonSpace ^^ {a => List("arg" -> a)}
-  def fileOpt: PM = ("-f" | "--file") ~! nonSpace ^^ { case _ ~ ns => List("file" -> ns) }
+  def args: PM = (nsOpt | fileOpt | oyaml | normalArg).+ ^^ { _.fold(List.empty[(String, String)])(_++_) }
   def nsOpt: PM = ("-n" | "--namespace") ~! nonSpace ^^ { case _ ~ ns => List("namespace" -> ns) }
-  def oyaml: PM = ("-oyaml" | ("-o" ~ "yaml")) ^^ {_ => List("format" -> "yaml")}
+  def fileOpt: PM = ("-f" | "--file") ~! nonSpace ^^ { case _ ~ ns => List("file" -> ns) }
+  def oyaml: PM = (("-o" ~! "yaml")) ^^ {_ => List("format" -> "yaml")}
+  def normalArg: PM = nonSpace ^^ {a => List("arg" -> a)}
   def parse0(s: String) = parseAll(args, s) match
     case Success(matched, _) => matched
     case Failure(msg, _) =>
@@ -239,12 +235,12 @@ object KubectlParser extends scala.util.parsing.combinator.RegexParsers:
     case Error(msg, _) =>
       println(msg)
       throw new Exception
+extension (p: KubectlParser.M) def apply(key: String) = p.filter(_._1 == key).map(_._2)
 
 object KubectlExec:
   import KubectlParser.{M, PM, parse0}
   val source = getPath(System.getenv("YDIFF_KUBECTL_SOURCE"))
   val db = source / os.up / source.last.replaceFirst("((\\.yaml|\\.yml|)$)", ".modified$1")
-  extension (p: M) def apply(key: String) = p.filter(_._1 == key).map(_._2)
 
   def apply(a: M) =
     import Models._
@@ -254,7 +250,7 @@ object KubectlExec:
       .reduce: (source, added) =>
         val List(sk, ak) = List(source, added).map(_.keySet)
         val (exists, nonExists) = (sk.intersect(ak), ak.removedAll(sk))
-        val appliedKeys = a("cmd").head match
+        val appliedKeys = a("arg").head match
           case "apply" => added.keySet
           case "replace" => 
             nonExists.foreach: key =>
@@ -272,7 +268,7 @@ object KubectlExec:
 
   def getOrDelete(a: M, delete: Boolean) =
     var notFound = true
-    val (kind, ns, name) = (a("arg").head, a("namespace").headOption.filter(_.nonEmpty), a("arg")(1))
+    val (kind, ns, name) = (a("arg")(1), a("namespace").headOption.filter(_.nonEmpty), a("arg")(2))
     val result =
       new YamlDocs.Static(read(db), true).sourceObjs(using new ReadOption()).values
         .filter: doc =>
@@ -286,17 +282,23 @@ object KubectlExec:
       System.err.println(s"Resource Not Found: ${Models.GVK(kind, ns.getOrElse(""), name)}")
       System.exit(1)
     if delete then os.write.over(db,result)
-    else println(result)
+    else if a("format").contains("yaml") then
+      println(result)
+    else
+      println(s"Resource Exists: ${Models.GVK(kind, ns.getOrElse(""), name)}")
 
   def kubectl(args: List[String]) =
     val a = KubectlParser.parse0(args.map(_.replaceAll(" ", "SSPPAACCEE")).mkString(" ")).map(tp => (tp._1, tp._2.replaceAll("SSPPAACCEE", " ")))
     println(s"# ${a.map(tp => tp._1 + "=" + tp._2).mkString(", ")}")
-    a("cmd").head match
+    a("arg").head match
       case "get" => getOrDelete(a, false)
       case "delete" => getOrDelete(a, true)
       case "restore" => os.copy.over(source, db)
       case "replace" | "apply" | "create" => apply(a)
       case "print" => println(os.read(db))
+      case cmd =>
+        println(s"Command $cmd not supported.")
+        System.exit(1)
 
 object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   import scala.util.parsing.combinator._
