@@ -752,7 +752,7 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 dump: Option[Path] = None,
                 extraRuleFiles: List[String] = Nil,
                 extraRules: List[String] = Nil,
-                flags: Set[String] = Set("expandText", "inline", "removed"),
+                flags: Set[String] = Set("rule", "inline", "removed", "expandText"),
                 debugFlags: Set[String] = Set(),
                 multiLineAroundLines: Int = 8,
                 override val rules: Rules = Map(),
@@ -762,7 +762,7 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
   val debug: Flags = new Flags(debugFlags)
   val f: Flags = new Flags(flags)
   def processDefault: DiffArgs = this.copy(
-    rules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filter(_ => f.ignore) ::: extraRules ::: extraRuleFiles.map(p => read(getPath(p)))),
+    rules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filter(_ => f.rule) ::: extraRules ::: extraRuleFiles.map(p => read(getPath(p)))),
     flags = if source.isInstanceOf[YamlDocs.FromK8s.type] then flags.+("k8s") else flags
   )
 
@@ -818,9 +818,9 @@ object Args:
             .text(reset+"Show only IDs for changed/removed/added docs".zh("对于所有的修改/删除/新增YAML, 只输出ID。")+param)
             .optional()
             .flagF("onlyId"),
-          opt[Unit]("no-ignore")
+          opt[Unit]("no-rule")
             .text(reset+"Don't use default ignore list(k8s only).".zh("不使用默认的规则列表(仅k8s模式)。")+param)
-            .flagNoF("ignore"),
+            .flagNoF("rule"),
           opt[Unit]("no-inline")
             .text(reset+"Show diff line by line.".zh("按行显示差异")+param)
             .flagNoF("inline"),
@@ -928,6 +928,12 @@ val processedArgs =
 if args.headOption.contains("kubectl") then
   KubectlExec.kubectl(args.toList.drop(1))
 else
-  scopt.OParser.parse(Args.parser, processedArgs, DiffArgs()) match
+  // 这里的做法是为了解决一个问题: 显示版本(-v)的时候, 会将终端改为彩色的状态,
+  // 影响后续命令行使用, 所以需要在退出前打印一下reset
+  val esetup = new scopt.DefaultOEffectSetup with scopt.OEffectSetup:
+    override def terminate(exitState: Either[String, Unit]): Unit =
+      print(org.fusesource.jansi.Ansi.ansi().reset())
+      super.terminate(exitState)
+  scopt.OParser.parse(Args.parser, processedArgs, DiffArgs(), esetup) match
     case Some(a: DiffArgs) => new YamlDiffer(using a.processDefault).doDiff
     case _ =>
