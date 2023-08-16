@@ -542,11 +542,16 @@ object YamlDocs:
         util.Failure(t)
       case t =>
         try
-          new ObjectMapper(yamlFactory).readTree(yaml)
+          println("Yaml Parse Error")
+          println("=====YAML====")
+          println(yaml0)
+          new ObjectMapper(yamlFactory).readTree(yaml0)
+          println("=====ERROR====")
+          t.printStackTrace()
         catch
-          case t =>
-            println(yaml)
-            t.printStackTrace();
+          case tm =>
+            println("=====ERROR====")
+            tm.printStackTrace();
         util.Failure(t)
     .toOption
   end read
