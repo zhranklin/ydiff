@@ -148,6 +148,36 @@ object ValueMatcher:
 
 val defaultIgnores = """
 * {
+  /metadata/annotations/deployment.kubernetes.io/revision: always
+}
+Deployment {
+  /spec/progressDeadlineSeconds: exact(600)
+  /spec/revisionHistoryLimit: exact(10)
+  /spec/template/metadata/creationTimestamp: always
+  /spec/strategy/type: exact(RollingUpdate)
+  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
+  /spec/template/spec/restartPolicy: exact(Always)
+  /spec/template/spec/schedulerName: exact(default-scheduler)
+  /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
+  /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
+  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
+  /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
+}
+StatefulSet {
+  /spec/revisionHistoryLimit: exact(10)
+  /spec/template/metadata/creationTimestamp: always
+  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
+  /spec/template/spec/restartPolicy: exact(Always)
+  /spec/template/spec/schedulerName: exact(default-scheduler)
+  /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
+  /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
+  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
+  /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
+}
+Service {
+  /spec/clusterIP: always
+}
+* {
   /spec/template/spec/containers/*/env: key(/name)
   /spec/template/spec/containers/*/volumeMounts: key(/name)
   /spec/template/spec/volumes: key(/name)
@@ -247,7 +277,7 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   def rule: Parser[(String, ValueMatcher | KeyExtractor)] = """[^:\s]+""".r ~ ":" ~ valueMatcher ^^ { case p ~ _ ~ vm => p -> vm }
   def valueMatcher = always | exact | ref | key
   def always = "always" ^^ { _ => ValueMatcher.always}
-  def exact = "exact" ~ "(" ~ (("""\d+""".r ^^ {_.toInt}) | ("""[]""" ^^ {_ => new java.util.HashMap()}) | ("""[^\s()]*""".r)) ~ ")" ^^ {
+  def exact = "exact" ~ "(" ~ (("""\d+""".r ^^ {_.toInt}) | ("""\{\}""".r ^^ {_ => new java.util.HashMap()}) | ("""\[\]""".r ^^ {_ => new java.util.ArrayList()}) | ("""[^\s()]*""".r)) ~ ")" ^^ {
     case _ ~ _ ~ param ~ _ => ValueMatcher.exact(param)
   }
   def ref = "ref" ~ "(" ~ """[^\s()]+""".r ~ ")" ^^ {
@@ -427,6 +457,7 @@ object YamlDocs:
           println(s"$path: $node")
         true
       case node: ObjectNode =>
+        var hasModified = false
         node.fields().asScala
           .filter: kv =>
             removeIgnoredFields(root, kv.getValue, s"$path/${kv.getKey}", rules)
@@ -434,7 +465,8 @@ object YamlDocs:
           .toList
           .foreach: key =>
             node.remove(key)
-        false
+            hasModified = true
+        hasModified && node.isEmpty
       case node: ArrayNode =>
         node.elements().asScala.toList.zipWithIndex
           .filter:
