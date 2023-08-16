@@ -148,72 +148,9 @@ object ValueMatcher:
 
 val defaultIgnores = """
 * {
-  /**/checksum~1config-volume*: always
-  /apiVersion: always
-  /metadata/annotations/autoscaling.alpha.kubernetes.io/conditions: always
-  /metadata/annotations/autoscaling.alpha.kubernetes.io/current-metrics: always
-  /metadata/annotations/deployment.kubernetes.io/revision: always
-  /metadata/annotations/kubectl.kubernetes.io/last-applied-configuration: always
-  /metadata/creationTimestamp: always
-  /metadata/finalizers: always
-  /metadata/generation: always
-  /metadata/labels/release: always
-  /metadata/managedFields: always
-  /metadata/resourceVersion: always
-  /metadata/selfLink: always
-  /metadata/uid: always
-  /spec/selector/matchLabels/release: always
-  /spec/template/metadata/creationTimestamp: always
-  /spec/template/metadata/generation: always
-  /spec/template/metadata/labels/release: always
-  /spec/template/metadata/resourceVersion: always
-  /spec/template/metadata/selfLink: always
-  /spec/template/metadata/uid: always
-  /status: always
-  /webhooks/*/clientConfig/caBundle: always
   /spec/template/spec/containers/*/env: key(/name)
   /spec/template/spec/containers/*/volumeMounts: key(/name)
   /spec/template/spec/volumes: key(/name)
-}
-Deployment {
-  /spec/progressDeadlineSeconds: exact(600)
-  /spec/revisionHistoryLimit: exact(10)
-  /spec/strategy/type: exact(RollingUpdate)
-  /spec/template/spec/serviceAccount: ref(../serviceAccountName)
-  /spec/template/spec/containers/*/imagePullPolicy: exact(IfNotPresent)
-  /spec/template/spec/containers/*/ports/*/protocol: exact(TCP)
-  /spec/template/spec/containers/*/*Probe/failureThreshold: exact(3)
-  /spec/template/spec/containers/*/*Probe/periodSeconds: exact(3)
-  /spec/template/spec/containers/*/*Probe/timeoutSeconds: exact(3)
-  /spec/template/spec/containers/*/*Probe/http*/scheme: exact(HTTP)
-  /spec/template/spec/containers/*/*/successThreshold: exact(1)
-  /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
-  /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
-  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
-  /spec/template/spec/restartPolicy: exact(Always)
-  /spec/template/spec/schedulerName: exact(default-scheduler)
-  /spec/template/spec/securityContext: exact([])
-  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
-  /spec/template/spec/volumes/*/*/defaultMode: exact(420)
-  /metadata/annotations/deployment.kubernetes.io~1revision: always
-}
-Service {
-  /spec/clusterIP: always
-  /spec/ports/*/protocol: exact(TCP)
-  /spec/sessionAffinity: exact(None)
-  /spec/type: exact(ClusterIP)
-  /spec/ports/*/targetPort: ref(../port)
-}
-ServiceAccount {
-  /secrets: always
-}
-MutatingWebhookConfiguration {
-  /webhooks/*/clientConfig/service/port: exact(443)
-  /webhooks/*/matchPolicy: exact(Exact)
-  /webhooks/*/objectSelector: exact([])
-  /webhooks/*/reinvocationPolicy: exact(Never)
-  /webhooks/*/rules/*/scope: exact(*)
-  /webhooks/*/timeoutSeconds: exact(30)
 }
 """
 
@@ -513,10 +450,11 @@ object YamlDocs:
         false
   end removeIgnoredFields
 
-  def read(yaml: String, k8s: Boolean, index: Option[Int])(using args: ReadOption): Option[YamlDoc] = boundary:
-    if yaml.trim.isEmpty then break(None)
+  def read(yaml0: String, k8s: Boolean, index: Option[Int])(using args: ReadOption): Option[YamlDoc] = boundary:
+    if yaml0.trim.isEmpty then break(None)
     import scala.util
     Try:
+      val yaml = args.neatCmd.map(c => echo(yaml0) | bash(c) | !!).getOrElse(yaml0)
       val tree = new ObjectMapper(yamlFactory).readTree(yaml)
       if tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode] then
         throw RuntimeException("EMPTY_OBJECT")
@@ -751,7 +689,7 @@ class YamlDiffer(using args: DiffArgs):
   end stripMultiLineDiff
 
 type Args = DiffArgs
-class ReadOption(val rules: Rules = Map(), val isK8s: Boolean = true, val expandText: Boolean = false, val printIgnores: Boolean = false)
+class ReadOption(val rules: Rules = Map(), val isK8s: Boolean = true, val expandText: Boolean = false, val printIgnores: Boolean = false, val neatCmd: Option[String] = None)
 case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 target: Path = root/"dev"/"stdin",
                 dump: Option[Path] = None,
@@ -761,7 +699,8 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 debugFlags: Set[String] = Set(),
                 multiLineAroundLines: Int = 8,
                 override val rules: Rules = Map(),
-               ) extends ReadOption(rules = rules, isK8s = flags.contains("k8s"), expandText = flags.contains("expandText"), printIgnores = debugFlags.contains("ignore")):
+                override val neatCmd: Option[String] = None,
+               ) extends ReadOption(rules = rules, isK8s = flags.contains("k8s"), expandText = flags.contains("expandText"), printIgnores = debugFlags.contains("ignore"), neatCmd = neatCmd):
   class Flags(flags: Set[String]) extends Dynamic:
     def selectDynamic(name: String): Boolean = flags.contains(name)
   val debug: Flags = new Flags(debugFlags)
@@ -808,6 +747,14 @@ object Args:
             .text(reset+"Treat yaml docs as kubernetes resources.".zh("将输入当做Kubernetes资源处理。")+param)
             .optional()
             .flagF("k8s"),
+          opt[Unit]("neat")
+            .text(reset+"Use kubectl neat".zh("使用kubectl neat")+param)
+            .optional()
+            .flagF("neat")
+            .action: (_, a) =>
+              a.copy(
+                neatCmd = List("kubectl neat", "kube-neat").find(c => bash(c + " --help").!!!.exitCode == 0)
+              ),
           opt[Unit]("json-patch")
             .text(reset+"Print kubectl patch commands(k8s only).".zh("输出kubectl patch命令(仅k8s模式)。")+param)
             .flagF("jsonPatch"),
@@ -916,6 +863,7 @@ object Args:
       note(reset),
       checkConfig:
         case a: DiffArgs if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")
+        case a: DiffArgs if a.flags.contains("neat") && a.neatCmd.isEmpty => failure("Kubectl neat is not installed.")
         case _ => success
     )
   // end val
