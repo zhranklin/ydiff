@@ -858,10 +858,22 @@ object Args:
         ),
       note(""),
       cmd("kubectl")
-        .text(reset+"Some utilities for maintaining k8s resources.".zh {
+        .text("kubectl命令行模拟, 详见: ydiff kubectl --help")
+        .children(
+          help('h', "help")
+            .text(reset+"Show kubectl help".zh("显示ydiff kubectl帮助文档")+param)
+        ),
+      note(reset),
+      checkConfig:
+        case a: DiffArgs if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")
+        case a: DiffArgs if a.flags.contains("neat") && a.neatCmd.isEmpty => failure("Kubectl neat is not installed.")
+        case _ => success
+    )
+  val kubectlHelp = reset+"Some utilities for maintaining k8s resources.".zh {
           import org.fusesource.jansi.Ansi.ansi
           ansi().render(
-          """|kubectl命令行模拟, 当前支持kubectl的replace(apply), get, create, delete命令, 以及ydiff专门的用于数据源操作的restore、print命令。执行前需要先指定YDIFF_KUBECTL_SOURCE环境变量, 来指定数据源yaml文件。
+          """|@|bold,cyan ydiff kubectl|@
+             |kubectl命令行模拟, 当前支持kubectl的replace(apply), get, create, delete命令, 以及ydiff专门的用于数据源操作的restore、print命令。执行前需要先指定YDIFF_KUBECTL_SOURCE环境变量, 来指定数据源yaml文件。
              |
              |@|bold,cyan 使用步骤|@
              |  1. 配置别名: alias kubectl="ydiff kubectl"
@@ -890,14 +902,7 @@ object Args:
              |  3. apply命令实际与replace的行为一致, 即只执行完整资源替换, 不做内容合并, 这一点@|red 与原生kubectl apply有一定差异|@
              |  4. get命令只支持yaml和默认格式, 默认返回的结果不会与kubectl原生的相同, 但可以保证资源存在时退出码返回0, 不存在时返回1(可用于脚本中if判断)
              |""".stripMargin).toString
-        }+param)
-      ,
-      note(reset),
-      checkConfig:
-        case a: DiffArgs if !a.source.isInstanceOf[YamlDocs.FromK8s.type] && a.dump.nonEmpty => failure("Dump is only available for k8s source")
-        case a: DiffArgs if a.flags.contains("neat") && a.neatCmd.isEmpty => failure("Kubectl neat is not installed.")
-        case _ => success
-    )
+        }+param
   // end val
 
 System.setProperty("ydiffLang", if Option(System.getenv("LANG")).exists(_.toUpperCase().contains("CN")) then "zh" else "en")
@@ -911,7 +916,10 @@ val processedArgs =
   result.toList
 
 if args.headOption.contains("kubectl") then
-  KubectlExec.kubectl(args.toList.drop(1))
+  if args.tail.headOption.forall(o => o == "-h" || o == "--help") then
+    println(Args.kubectlHelp)
+  else
+    KubectlExec.kubectl(args.toList.drop(1))
 else
   // 这里的做法是为了解决一个问题: 显示版本(-v)的时候, 会将终端改为彩色的状态,
   // 影响后续命令行使用, 所以需要在退出前打印一下reset
