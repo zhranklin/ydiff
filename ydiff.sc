@@ -160,6 +160,8 @@ Deployment {
   /spec/template/spec/schedulerName: exact(default-scheduler)
   /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
   /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
+  /spec/template/spec/initContainers/*/terminationMessagePath: exact(/dev/termination-log)
+  /spec/template/spec/initContainers/*/terminationMessagePolicy: exact(File)
   /spec/template/spec/terminationGracePeriodSeconds: exact(30)
   /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
 }
@@ -209,15 +211,15 @@ object KubectlExec:
   val source = getPath(System.getenv("YDIFF_KUBECTL_SOURCE"))
   val db = source / os.up / source.last.replaceFirst("((\\.yaml|\\.yml|)$)", ".modified$1")
 
-  def apply(a: M) =
+  def doApply(cmd: String, inputs: List[String]) =
     import Models._
-    var result = (db :: a("file").map(getPath))
+    var result = (read(db) :: inputs)
       .map: f =>
-        new YamlDocs.Static(read(f), true).sourceObjs(using DiffArgs(flags = Set("k8s"))).toMap
+        new YamlDocs.Static(f, true).sourceObjs(using DiffArgs(flags = Set("k8s"))).toMap
       .reduce: (source, added) =>
         val List(sk, ak) = List(source, added).map(_.keySet)
         val (exists, nonExists) = (sk.intersect(ak), ak.removedAll(sk))
-        val appliedKeys = a("arg").head match
+        val appliedKeys = cmd match
           case "apply" => added.keySet
           case "replace" => 
             nonExists.foreach: key =>
@@ -233,26 +235,51 @@ object KubectlExec:
       .mkString("\n")
     os.write.over(db, result)
 
-  def getOrDelete(a: M, delete: Boolean) =
+  def apply(a: M) = doApply(a("arg").head, (a("file").map(getPath)).map(read))
+
+  def kubeSet(a: M) =
+    val tpe = a("arg")(1)
+    val kind = a("arg")(2)
+    val name = a("arg")(3)
+    import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
+    val ym = new ObjectMapper(new YAMLFactory().disable(WRITE_DOC_START_MARKER))
+    val tree = ym.readTree(doGetOrDelete(kind, a("namespace").headOption, name, false).head.yaml)
+    tpe match
+      case "image" =>
+        import scala.jdk.CollectionConverters._
+        val Array(lhs, rhs) = a("arg")(4).split("=", 2)
+        val containers = tree.get("spec").get("template").get("spec").get("containers").elements
+        containers.asScala
+          .filter(_.get("name").textValue == lhs)
+          .foreach{o => o.asInstanceOf[ObjectNode].put("image", rhs)}
+        doApply("apply", ym.writeValueAsString(tree) :: Nil)
+      case _ =>
+        System.err.println(s"Can not set $tpe: not supported")
+        System.exit(1)
+
+
+  def doGetOrDelete(kind: String, ns: Option[String], name: String, delete: Boolean) =
     var notFound = true
-    val (kind, ns, name) = (a("arg")(1), a("namespace").headOption.filter(_.nonEmpty), a("arg")(2))
-    val result =
-      new YamlDocs.Static(read(db), true).sourceObjs(using new ReadOption()).values
-        .filter: doc =>
-          val id = doc.id.asInstanceOf[Models.GVK]
-          val exists = id.kind == kind && id.name == name && ns.forall(_ == id.namespace)
-          if exists then notFound = false
-          delete ^ exists
-        .map(_.yaml)
-        .mkString("\n---\n")
+    val result = new YamlDocs.Static(read(db), true).sourceObjs(using new ReadOption()).values
+      .filter: doc =>
+        val id = doc.id.asInstanceOf[Models.GVK]
+        val exists = id.kind == kind && id.name == name && ns.forall(_ == id.namespace)
+        if exists then notFound = false
+        delete ^ exists
+      .toList
     if notFound then
-      System.err.println(s"Resource Not Found: ${Models.GVK(kind, ns.getOrElse(""), name)}")
+      System.err.println(s"Resource Not Found: ${Models.GVK(kind, name, ns.getOrElse(""))}")
       System.exit(1)
-    if delete then os.write.over(db,result)
+    result
+    
+  def getOrDelete(a: M, delete: Boolean) =
+    val (kind, ns, name) = (a("arg")(1), a("namespace").headOption, a("arg")(2))
+    val yaml = doGetOrDelete(kind, ns, name, delete).map(_.yaml).mkString("\n---\n")
+    if delete then os.write.over(db,yaml)
     else if a("format").contains("yaml") then
-      println(result)
+      println(yaml)
     else
-      println(s"Resource Exists: ${Models.GVK(kind, ns.getOrElse(""), name)}")
+      println(s"Resource Exists: ${Models.GVK(kind, name, ns.getOrElse(""))}")
 
   def kubectl(args: List[String]) =
     val a = KubectlParser.parse0(args.map(_.replaceAll(" ", "SSPPAACCEE")).mkString(" ")).map(tp => (tp._1, tp._2.replaceAll("SSPPAACCEE", " ")))
@@ -262,6 +289,7 @@ object KubectlExec:
       case "delete" => getOrDelete(a, true)
       case "restore" => os.copy.over(source, db)
       case "replace" | "apply" | "create" => apply(a)
+      case "set" => kubeSet(a)
       case "print" => println(os.read(db))
       case cmd =>
         println(s"Command $cmd not supported.")
