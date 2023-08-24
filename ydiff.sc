@@ -398,11 +398,14 @@ object YamlDocs:
       case _ => None
     def get(gvk: GVK)(using ReadOption): Option[YamlDoc] =
       import gvk._
-      val result = bash(s"kubectl get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}").!!!
-      if result.exitCode != 1 && result.err.text().contains("(NotFound)") || result.err.text().contains("doesn't have a resource type") then
+      val cmd = s"${summon[ReadOption].kubectlCmd} get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}"
+      val result = bash(cmd).!!!
+      if result.exitCode == 0 then
+        YamlDocs.read(result.out.text(), true, None)
+      else if result.err.text().contains("(NotFound)") || result.err.text().contains("doesn't have a resource type") then
         None
       else
-        YamlDocs.read(result.out.text(), true, None)
+        throw new Exception(s"Error executing kubectl cmd '$cmd'.\n${result.err.text()}")
     end get
 
   class Static(src: => String, isK8s: => Boolean) extends SourceDatabase:
@@ -749,7 +752,7 @@ class YamlDiffer(using args: DiffArgs):
   end stripMultiLineDiff
 
 type Args = DiffArgs
-class ReadOption(val rules: Rules = Map(), val isK8s: Boolean = true, val expandText: Boolean = false, val printIgnores: Boolean = false, val neatCmd: Option[String] = None)
+class ReadOption(val kubectlCmd: String = "kubectl", val rules: Rules = Map(), val isK8s: Boolean = true, val expandText: Boolean = false, val printIgnores: Boolean = false, val neatCmd: Option[String] = None)
 case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 target: Path = root/"dev"/"stdin",
                 dump: Option[Path] = None,
@@ -760,7 +763,8 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 multiLineAroundLines: Int = 8,
                 override val rules: Rules = Map(),
                 override val neatCmd: Option[String] = None,
-               ) extends ReadOption(rules = rules, isK8s = flags.contains("k8s"), expandText = flags.contains("expandText"), printIgnores = debugFlags.contains("ignore"), neatCmd = neatCmd):
+                override val kubectlCmd: String = "kubectl",
+               ) extends ReadOption(kubectlCmd = kubectlCmd, isK8s = flags.contains("k8s"), expandText = flags.contains("expandText"), printIgnores = debugFlags.contains("ignore"), neatCmd = neatCmd):
   class Flags(flags: Set[String]) extends Dynamic:
     def selectDynamic(name: String): Boolean = flags.contains(name)
   val debug: Flags = new Flags(debugFlags)
@@ -842,6 +846,12 @@ object Args:
           opt[Unit]("no-expand-text")
             .text(reset+"Don't expand string to yaml".zh("不会自动将字符串展开成yaml进行对比")+param)
             .flagNoF("expandText"),
+          opt[String]('k', "kubectl-cmd")
+            .text(reset+"Specify the kubectl cmd".zh("指定kubectl命令")+param)
+            .valueName("<cmd>")
+            .optional()
+            .action: (k, a) =>
+              a.copy(kubectlCmd = k),
           opt[Int]('m', "multi-lines-around")
             .text(reset+"How many lines should be printed before and after\nthe diff line in multi-line string".zh("跨行字符串中, 差异文本上下保留的行数。")+param)
             .valueName("<lines>")
