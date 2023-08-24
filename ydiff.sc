@@ -191,9 +191,10 @@ object KubectlParser extends scala.util.parsing.combinator.RegexParsers:
   val nonSpace = "[^ ]+".r
   type M = List[(String, String)]
   type PM = Parser[M]
-  def args: PM = (nsOpt | fileOpt | oyaml | normalArg).+ ^^ { _.fold(List.empty[(String, String)])(_++_) }
+  def args: PM = (nsOpt | fileOpt | oyaml | replicasOpt | normalArg).+ ^^ { _.fold(List.empty[(String, String)])(_++_) }
   def nsOpt: PM = ("-n" | "--namespace") ~! nonSpace ^^ { case _ ~ ns => List("namespace" -> ns) }
   def fileOpt: PM = ("-f" | "--file") ~! nonSpace ^^ { case _ ~ ns => List("file" -> ns) }
+  def replicasOpt: PM = ("--replicas=\\d+".r) ^^ { case rs => List("replicas" -> rs.split("=")(1)) } | "--replicas" ~! "\\d+".r ^^ { case _ ~ rs => List("replicas" -> rs) }
   def oyaml: PM = (("-o" ~! "yaml")) ^^ {_ => List("format" -> "yaml")}
   def normalArg: PM = nonSpace ^^ {a => List("arg" -> a)}
   def parse0(s: String) = parseAll(args, s) match
@@ -235,28 +236,29 @@ object KubectlExec:
       .mkString("\n")
     os.write.over(db, result)
 
-  def apply(a: M) = doApply(a("arg").head, (a("file").map(getPath)).map(read))
 
+  def setImage(tree: JsonNode, expr: String): JsonNode =
+    val Array(lhs, rhs) = expr.split("=", 2)
+    val containers = tree.get("spec").get("template").get("spec").get("containers").elements
+    containers.asScala
+      .filter(_.get("name").textValue == lhs)
+      .foreach{o => o.asInstanceOf[ObjectNode].put("image", rhs)}
+    tree
   def kubeSet(a: M) =
-    val tpe = a("arg")(1)
-    val kind = a("arg")(2)
-    val name = a("arg")(3)
     import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
     val ym = new ObjectMapper(new YAMLFactory().disable(WRITE_DOC_START_MARKER))
-    val tree = ym.readTree(doGetOrDelete(kind, a("namespace").headOption, name, false).head.yaml)
-    tpe match
-      case "image" =>
-        import scala.jdk.CollectionConverters._
-        val Array(lhs, rhs) = a("arg")(4).split("=", 2)
-        val containers = tree.get("spec").get("template").get("spec").get("containers").elements
-        containers.asScala
-          .filter(_.get("name").textValue == lhs)
-          .foreach{o => o.asInstanceOf[ObjectNode].put("image", rhs)}
-        doApply("apply", ym.writeValueAsString(tree) :: Nil)
+    def tree(kind: String, name: String) = ym.readTree(doGetOrDelete(kind, a("namespace").headOption, name, false).head.yaml)
+    val result = a("arg") match
+      case "set" :: "image" :: kind :: name :: expr :: rest => setImage(tree(kind, name), expr)
+      case "scale" :: kind :: name :: rest =>
+        val t = tree(kind, name)
+        t.get("spec").asInstanceOf[ObjectNode].put("replicas", a("replicas").head.toInt)
+        t
       case _ =>
-        System.err.println(s"Can not set $tpe: not supported")
+        System.err.println(s"Not supported: ${a("arg").mkString(" ")}")
         System.exit(1)
-
+        null
+    doApply("apply", ym.writeValueAsString(result) :: Nil)
 
   def doGetOrDelete(kind: String, ns: Option[String], name: String, delete: Boolean) =
     var notFound = true
@@ -272,11 +274,10 @@ object KubectlExec:
       System.exit(1)
     result
     
-  def getOrDelete(a: M, delete: Boolean) =
-    val (kind, ns, name) = (a("arg")(1), a("namespace").headOption, a("arg")(2))
+  def getOrDelete(kind: String, name: String, ns: Option[String], format: Option[String], delete: Boolean) =
     val yaml = doGetOrDelete(kind, ns, name, delete).map(_.yaml).mkString("\n---\n")
     if delete then os.write.over(db,yaml)
-    else if a("format").contains("yaml") then
+    else if format.contains("yaml") then
       println(yaml)
     else
       println(s"Resource Exists: ${Models.GVK(kind, name, ns.getOrElse(""))}")
@@ -284,13 +285,12 @@ object KubectlExec:
   def kubectl(args: List[String]) =
     val a = KubectlParser.parse0(args.map(_.replaceAll(" ", "SSPPAACCEE")).mkString(" ")).map(tp => (tp._1, tp._2.replaceAll("SSPPAACCEE", " ")))
     println(s"# ${a.map(tp => tp._1 + "=" + tp._2).mkString(", ")}")
-    a("arg").head match
-      case "get" => getOrDelete(a, false)
-      case "delete" => getOrDelete(a, true)
-      case "restore" => os.copy.over(source, db)
-      case "replace" | "apply" | "create" => apply(a)
-      case "set" => kubeSet(a)
-      case "print" => println(os.read(db))
+    a("arg") match
+      case (cmd @ ("get" | "delete")) :: kind :: name :: _ => getOrDelete(kind, name, a("namespace").headOption, a("format").headOption, cmd == "delete")
+      case "restore" :: _ => os.copy.over(source, db)
+      case (cmd @ ("replace" | "apply" | "create")) :: _ => doApply(cmd, (a("file").map(getPath)).map(read))
+      case ("set" | "scale") :: rest => kubeSet(a)
+      case "print" :: _ => println(os.read(db))
       case cmd =>
         println(s"Command $cmd not supported.")
         System.exit(1)
@@ -901,7 +901,7 @@ object Args:
           import org.fusesource.jansi.Ansi.ansi
           ansi().render(
           """|@|bold,cyan ydiff kubectl|@
-             |kubectl命令行模拟, 当前支持kubectl的replace(apply), get, create, delete命令, 以及ydiff专门的用于数据源操作的restore、print命令。执行前需要先指定YDIFF_KUBECTL_SOURCE环境变量, 来指定数据源yaml文件。
+             |kubectl命令行模拟, 当前支持kubectl的replace(apply), get, create, delete, set image, scale命令, 以及ydiff专门的用于数据源操作的restore、print命令。执行前需要先指定YDIFF_KUBECTL_SOURCE环境变量, 来指定数据源yaml文件。
              |
              |@|bold,cyan 使用步骤|@
              |  1. 配置别名: alias kubectl="ydiff kubectl"
