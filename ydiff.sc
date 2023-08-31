@@ -522,6 +522,15 @@ object YamlDocs:
       if tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode] then
         throw RuntimeException("EMPTY_OBJECT")
       var rules: List[(String, ValueMatcher | KeyExtractor)] = List.empty
+      val id =
+        if k8s then
+          try
+            val name = tree.get("metadata").get("name").asText
+            val namespace = Try(tree.get("metadata").get("namespace").asText).toOption.getOrElse("")
+            val kind = tree.get("kind").asText
+            new GVK(kind, name, namespace)
+          catch case e => throw new Exception("Error: field '.kind' and '.metadata.name' must be set!", e)
+        else DocID(index.get.toString)
       if args.isK8s then
         val kind = tree.get("kind").asText()
         rules = args.rules.getOrElse(kind, Nil) ::: args.rules.getOrElse("*", Nil)
@@ -530,13 +539,6 @@ object YamlDocs:
         expandTextToYaml(tree)
       removeTrailingSpaces(tree)
       arrayToObj("", tree, rules.filter(_._2.isInstanceOf[KeyExtractor]).map(tp => (tp._1, tp._2.asInstanceOf[KeyExtractor])))
-      val id =
-        if k8s then
-          val name = tree.get("metadata").get("name").asText
-          val namespace = Try(tree.get("metadata").get("namespace").asText).toOption.getOrElse("")
-          val kind = tree.get("kind").asText
-          new GVK(kind, name, namespace)
-        else DocID(index.get.toString)
       Models.YamlDoc(yaml, tree, id)
     .recoverWith[YamlDoc]:
       case t: RuntimeException if t.getMessage == "EMPTY_OBJECT" =>
@@ -544,15 +546,14 @@ object YamlDocs:
       case t =>
         try
           println("Yaml Parse Error")
-          println("=====YAML====")
-          println(yaml0)
           new ObjectMapper(yamlFactory).readTree(yaml0)
           println("=====ERROR====")
           t.printStackTrace()
-        catch
-          case tm =>
-            println("=====ERROR====")
-            tm.printStackTrace();
+        catch case tm =>
+          println("=====ERROR====")
+          tm.printStackTrace();
+        println("=====YAML CONTENT====")
+        println(yaml0)
         util.Failure(t)
     .toOption
   end read
