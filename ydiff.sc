@@ -859,13 +859,13 @@ object Args:
             .optional()
             .action: (l, a) =>
               a.copy(multiLineAroundLines = l),
-          opt[String]("extra-rules")
+          opt[String]('r', "extra-rules")
             .text(reset+"Extra rules, can be specified multiple times.".zh("额外的过滤规则, 可多次指定(仅k8s模式)。")+param)
             .valueName("<rule-text>")
             .optional()
             .action: (i, a) =>
               a.copy(extraRules = a.extraRules.appended(i)),
-          opt[String]("extra-rule-file")
+          opt[String]('R', "extra-rule-file")
             .text(reset+"Extra rules file, can be specified multiple times.".zh("额外的过滤规则文件, 可多次指定(仅k8s模式)。")+param)
             .valueName("<file>")
             .optional()
