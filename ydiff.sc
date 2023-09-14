@@ -297,7 +297,7 @@ object KubectlExec:
 
 object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   import scala.util.parsing.combinator._
-  def groups: Parser[Rules] = rep(group) ^^ (_.toMap)
+  def groups: Parser[Rules] = rep(group) ^^ (_.groupBy(_._1).map{ tp => tp._1 -> tp._2.map(_._2).flatten}.toMap)
   def group = kind ~ "{" ~ rep(rule) ~ "}" ^^ {
     case k ~ _ ~ matches ~ _ => k -> matches
   }
@@ -305,8 +305,8 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   def rule: Parser[(String, ValueMatcher | KeyExtractor)] = """[^:\s]+""".r ~ ":" ~ valueMatcher ^^ { case p ~ _ ~ vm => p -> vm }
   def valueMatcher = always | exact | ref | key
   def always = "always" ^^ { _ => ValueMatcher.always}
-  def exact = "exact" ~ "(" ~ (("""\d+""".r ^^ {_.toInt}) | ("""\{\}""".r ^^ {_ => new java.util.HashMap()}) | ("""\[\]""".r ^^ {_ => new java.util.ArrayList()}) | ("""[^\s()]*""".r)) ~ ")" ^^ {
-    case _ ~ _ ~ param ~ _ => ValueMatcher.exact(param)
+  def exact = "exact" ~ "(" ~ (("""\d+""".r ^^ {_.toInt}) ~ ")" | ("""\{\}""".r ^^ {_ => new java.util.HashMap()}) ~ ")" | ("""\[\]""".r ^^ {_ => new java.util.ArrayList()}) ~ ")" | ("""[^\s()]*""".r) ~ ")") ^^ {
+    case _ ~ _ ~ (param ~ _) => ValueMatcher.exact(param)
   }
   def ref = "ref" ~ "(" ~ """[^\s()]+""".r ~ ")" ^^ {
     case _ ~ _ ~ param ~ _ => ValueMatcher.ref(param)
@@ -863,12 +863,14 @@ object Args:
             .text(reset+"Extra rules, can be specified multiple times.".zh("额外的过滤规则, 可多次指定(仅k8s模式)。")+param)
             .valueName("<rule-text>")
             .optional()
+            .unbounded()
             .action: (i, a) =>
               a.copy(extraRules = a.extraRules.appended(i)),
           opt[String]('R', "extra-rule-file")
             .text(reset+"Extra rules file, can be specified multiple times.".zh("额外的过滤规则文件, 可多次指定(仅k8s模式)。")+param)
             .valueName("<file>")
             .optional()
+            .unbounded()
             .action: (p, a) =>
               a.copy(extraRuleFiles = a.extraRuleFiles.appended(p)),
           opt[String]("dump")
