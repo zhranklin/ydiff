@@ -517,7 +517,7 @@ object YamlDocs:
     if yaml0.trim.isEmpty then break(None)
     import scala.util
     Try:
-      val yaml = args.neatCmd.map(c => echo(yaml0) | bash(c) | !!).getOrElse(yaml0)
+      val yaml = args.neatCmd.map(c => echo(yaml0) | bash(c) | !!).filter(_.trim != "{}").getOrElse(yaml0)
       val tree = new ObjectMapper(yamlFactory).readTree(yaml)
       if tree == null || tree.isInstanceOf[MissingNode] || tree.isInstanceOf[NullNode] then
         throw RuntimeException("EMPTY_OBJECT")
