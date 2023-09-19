@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang
-//> using scala 3.3.0
+//> using scala 3.3.1
 //> using dep com.zhranklin::scala-tricks:0.2.5
 //> using dep com.flipkart.zjsonpatch:zjsonpatch:0.4.14
 //> using dep com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.3
