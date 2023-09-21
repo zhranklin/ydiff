@@ -1,5 +1,6 @@
-#!/usr/bin/env -S scala-cli shebang
+#!/usr/bin/env -S scala-cli --power shebang
 //> using scala 3.3.1
+//> using buildInfo
 //> using dep com.zhranklin::scala-tricks:0.2.5
 //> using dep com.flipkart.zjsonpatch:zjsonpatch:0.4.14
 //> using dep com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.3
@@ -788,11 +789,22 @@ object Args:
   extension (p: String) def zh(z: String): String = 
     if (System.getProperty("ydiffLang") == "zh") z
     else p
+
+  val buildInfo =
+    import scala.cli.build.BuildInfo
+    val opts: List[String] = BuildInfo.Main.scalacOptions.toList
+    val version = opts.find(_.startsWith("-DydiffVersion=")).map(_.replaceAll("^-DydiffVersion=", "")).getOrElse("Unknown Version")
+    val p = opts.find(_.startsWith("-DydiffPlatform=")).map(_.replaceAll("^-DydiffPlatform=", "")).getOrElse("Unknown")
+    val deps = s"built with Scala ${BuildInfo.scalaVersion}, Java ${BuildInfo.jvmVersion.get}"
+    if p == "JVM" then
+      s"$version\nUniversal version (on Java), $deps"
+    else
+      s"$version\nFor $p, $deps, GraalVM Native Image".replaceAll("_", " ")
   def parser =
     import builder.{arg, _}
     OParser.sequence(
       programName("ydiff"),
-      head("YAML Diff".zh("Yaml对比工具")+" YDIFF_VERSION"+param),
+      head("Yaml Diff ".zh("Yaml对比工具 ") + buildInfo + param),
       help('h', "help")
         .text(reset+"Show this help.".zh("显示帮助文档")+param),
       version('v', "version")
@@ -818,7 +830,7 @@ object Args:
             .flagF("neat")
             .action: (_, a) =>
               a.copy(
-                neatCmd = List("kubectl neat", "kube-neat").find(c => bash(c + " --help").!!!.exitCode == 0)
+                neatCmd = List("kubectl neat", "kubectl-neat").find(c => bash(c + " --help").!!!.exitCode == 0)
               ),
           opt[Unit]("json-patch")
             .text(reset+"Print kubectl patch commands(k8s only).".zh("输出kubectl patch命令(仅k8s模式)。")+param)

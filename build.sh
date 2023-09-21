@@ -1,5 +1,5 @@
 #!/bin/bash
-mode="--native-image"
+mode="--native-image --jvm 21 --graalvm-java-version 21 --graalvm-version 21.0.0"
 case "$(uname -sm)" in
   Darwin\ arm64)   postfix=_darwin_arm64     ;;
   Darwin\ x86_64)  postfix=_darwin_amd64     ;;
@@ -32,13 +32,13 @@ else
 fi
 
 if [[ $1 = "noarch" ]]; then
-  tag="$tag Universal Version (on Java)"
+  platform=JVM
 else
-  tag="$tag For $(uname -sm) (via GraalVM Native Image)"
+  platform=${postfix#_}
 fi
 
 mkdir -p builds
 out=builds/ydiff$postfix
 rm -f $out $out.tar.gz
-scala-cli --power package -o $out $mode <(sed "s/YDIFF_VERSION/$tag/g" ydiff.sc)
+scala-cli --power package -o $out $mode ydiff.sc -O -DydiffVersion=$tag -O -DydiffPlatform=$platform --jvm-index https://github.com/zhranklin/jvm-index/raw/patch-1/index.json
 tar czf $out.tar.gz $out
