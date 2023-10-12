@@ -844,7 +844,7 @@ object Args:
             .action: (i, a) =>
               a.copy(extraRules = a.extraRules.appended(i)),
           opt[String]('R', "extra-rule-file")
-            .text(reset+"Extra rules file, can be specified multiple times.".zh("额外的过滤规则文件, 可多次指定(仅k8s模式)。")+param)
+            .text(reset+"Extra rules file, can be specified multiple times.".zh("额外的过滤规则文件/URL, 可多次指定(仅k8s模式)。如-R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules")+param)
             .valueName("<file>")
             .optional()
             .unbounded()

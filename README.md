@@ -1,36 +1,45 @@
 # ydiff
-The yaml diff tool.
+Yaml对比工具
 
-## Install
-Just download from [The Latest Release](https://github.com/zhranklin/ydiff/releases/latest)
+## 安装
+下载链接: [The Latest Release](https://github.com/zhranklin/ydiff/releases/latest)
 
-Choose by your platform. If there is no supported version for your platform and you have java installed, you can use `noarch` version.
+根据所在平台选择版本, 如果没有对应平台的二进制, 可以选择noarch版本(依赖Java8)
 
-## Usage
+## 使用
 ```bash
 ydiff -h
-Yaml Diff v0.1.6
-Usage: ydiff [options] [source-file] [target-file]
+Yaml对比工具
+Usage: ydiff [diff|kubectl] [options] <args>...
 
-  -h, --help               Show this help.
-  -v, --version            Show version
-  --k8s                    Treat yaml docs as kubernetes resources.
-  --json-patch             Show kubectl patch commands.(k8s only)
-  --show-new               Show complete yaml text of new yaml docs.
-  --show-removed           Show complete yaml text of removed yaml docs.
-  --only-id                Show only IDs for changed/removed/added docs
-  --no-ignore              Don't use default ignore list.(k8s only)
-  --no-inline              Show diff line by line.
+  -h, --help               显示帮助文档
+  -v, --version            显示版本
+  -l, --lang <language>    Choose language(zh/en)|选择语言(zh/en)
+
+Command: diff [options] [source-file] [target-file]
+(默认)运行YAML对比工具
+  --k8s                    将输入当做Kubernetes资源处理。
+  --neat                   使用kubectl neat
+  --json-patch             输出kubectl patch命令(仅k8s模式)。
+  --show-new               完整输出新增的YAML。
+  --show-removed           完成输出删除的YAML。
+  --only-id                对于所有的修改/删除/新增YAML, 只输出ID。
+  --no-inline              按行显示差异
+  --no-removed             不显示删除的资源
+  --no-expand-text         不会自动将字符串展开成yaml进行对比
+  -k, --kubectl-cmd <cmd>  指定kubectl命令
   -m, --multi-lines-around <lines>
-                           How many lines should be printed before and after
-                           the diff line in multi-line string
-  --extra-ignore <rule-text>
-                           Extra ignore rules, can be specified multiple times.
-  --extra-ignore-file <file>
-                           Extra ignore rules file, can be specified multiple times.
-  --dump <file>            Dump file name, if set, the resource of k8s source will be dumped to the file
-  source-file              Source yaml file, specify "k8s" to fetch resource
-                           from kubernetes cluster, and default to be k8s.
-  target-file              Target yaml file, default to be stdin.
+                           跨行字符串中, 差异文本上下保留的行数。
+  -r, --extra-rules <rule-text>
+                           额外的过滤规则, 可多次指定(仅k8s模式)。
+  -R, --extra-rule-file <file>
+                           额外的过滤规则文件/URL, 可多次指定(仅k8s模式)。如-R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules
+  --dump <file>            备份的文件名, 设置后将备份导出源yaml(仅k8s模式)。
+  source-file              来源文件名, 用k8s表示取自k8s集群, 默认为k8s。
+  target-file              目标文件名, 默认为标准输入。
+
+Command: kubectl [options]
+kubectl命令行模拟, 详见: ydiff kubectl --help
+  -h, --help               显示ydiff kubectl帮助文档
 ```
 
