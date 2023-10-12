@@ -147,46 +147,6 @@ object ValueMatcher:
     def matches(node: JsonNode, basePath: String, value: JsonNode) = true
     override def toString = "always"
 
-val defaultIgnores = """
-* {
-  /metadata/annotations/deployment.kubernetes.io/revision: always
-}
-Deployment {
-  /spec/progressDeadlineSeconds: exact(600)
-  /spec/revisionHistoryLimit: exact(10)
-  /spec/template/metadata/creationTimestamp: always
-  /spec/strategy/type: exact(RollingUpdate)
-  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
-  /spec/template/spec/restartPolicy: exact(Always)
-  /spec/template/spec/schedulerName: exact(default-scheduler)
-  /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
-  /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
-  /spec/template/spec/initContainers/*/terminationMessagePath: exact(/dev/termination-log)
-  /spec/template/spec/initContainers/*/terminationMessagePolicy: exact(File)
-  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
-  /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
-}
-StatefulSet {
-  /spec/revisionHistoryLimit: exact(10)
-  /spec/template/metadata/creationTimestamp: always
-  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
-  /spec/template/spec/restartPolicy: exact(Always)
-  /spec/template/spec/schedulerName: exact(default-scheduler)
-  /spec/template/spec/containers/*/terminationMessagePath: exact(/dev/termination-log)
-  /spec/template/spec/containers/*/terminationMessagePolicy: exact(File)
-  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
-  /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
-}
-Service {
-  /spec/clusterIP: always
-}
-* {
-  /spec/template/spec/containers/*/env: key(/name)
-  /spec/template/spec/containers/*/volumeMounts: key(/name)
-  /spec/template/spec/volumes: key(/name)
-}
-"""
-
 object KubectlParser extends scala.util.parsing.combinator.RegexParsers:
   import scala.util.parsing.combinator._
   val nonSpace = "[^ ]+".r
@@ -302,7 +262,7 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
   def group = kind ~ "{" ~ rep(rule) ~ "}" ^^ {
     case k ~ _ ~ matches ~ _ => k -> matches
   }
-  def kind = """\w+""".r | "*"
+  def kind = """[\w,]+""".r | "*"
   def rule: Parser[(String, ValueMatcher | KeyExtractor)] = """[^:\s]+""".r ~ ":" ~ valueMatcher ^^ { case p ~ _ ~ vm => p -> vm }
   def valueMatcher = always | exact | ref | key
   def always = "always" ^^ { _ => ValueMatcher.always}
@@ -327,10 +287,11 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
     val result: mutable.Map[String, List[(String, ValueMatcher | KeyExtractor)]] = mutable.Map()
     s.map(parse0).foreach: i =>
       i.foreach:
-        case (k, v) =>
-          if result.contains(k) then
-            result.update(k, result(k).++(v))
-          else result.put(k, v)
+        case (ks, v) =>
+          ks.split(",").foreach: k =>
+            if result.contains(k) then
+              result.update(k, result(k).++(v))
+            else result.put(k, v)
     result.toMap
   end parseAndMerge
 end IgnoreRulesParser 
@@ -760,7 +721,7 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 dump: Option[Path] = None,
                 extraRuleFiles: List[String] = Nil,
                 extraRules: List[String] = Nil,
-                flags: Set[String] = Set("rule", "inline", "removed", "expandText"),
+                flags: Set[String] = Set("inline", "removed", "expandText"),
                 debugFlags: Set[String] = Set(),
                 multiLineAroundLines: Int = 8,
                 override val rules: Rules = Map(),
@@ -771,8 +732,15 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
     def selectDynamic(name: String): Boolean = flags.contains(name)
   val debug: Flags = new Flags(debugFlags)
   val f: Flags = new Flags(flags)
+  def readOrDownload(p: String) =
+    if p.startsWith("http://") || p.startsWith("https://") then
+      val res = !.curl.`-sSL`.__(p) | !!
+      if res == null || res.trim.isEmpty then
+        throw new IllegalArgumentException(s"No content from url: $p")
+      res
+    else read(getPath(p))
   def processDefault: DiffArgs = this.copy(
-    rules = IgnoreRulesParser.parseAndMerge(List(defaultIgnores).filter(_ => f.rule) ::: extraRules ::: extraRuleFiles.map(p => read(getPath(p)))),
+    rules = IgnoreRulesParser.parseAndMerge(extraRules ::: extraRuleFiles.map(readOrDownload)),
     flags = if source.isInstanceOf[YamlDocs.FromK8s.type] then flags.+("k8s") else flags
   )
 
@@ -847,9 +815,6 @@ object Args:
             .text(reset+"Show only IDs for changed/removed/added docs".zh("对于所有的修改/删除/新增YAML, 只输出ID。")+param)
             .optional()
             .flagF("onlyId"),
-          opt[Unit]("no-rule")
-            .text(reset+"Don't use default ignore list(k8s only).".zh("不使用默认的规则列表(仅k8s模式)。")+param)
-            .flagNoF("rule"),
           opt[Unit]("no-inline")
             .text(reset+"Show diff line by line.".zh("按行显示差异")+param)
             .flagNoF("inline"),
