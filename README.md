@@ -6,7 +6,58 @@ Yaml对比工具
 
 根据所在平台选择版本, 如果没有对应平台的二进制, 可以选择noarch版本(依赖Java8)
 
-## 使用
+## 使用方法
+### 典型场景
+#### 1. 对比普通yaml文件
+```bash
+ydiff file1.yaml file2.yaml
+```
+
+#### 2. 对比Kubernetes资源文件
+```bash
+ydiff --k8s file1.yaml file2.yaml
+```
+
+#### 3. 将Kubernetes资源文件与当前集群进行对比
+```bash
+ydiff --k8s file1.yaml
+```
+
+或
+
+```bash
+cat file1.yaml | ydiff --k8s
+```
+
+### Cookbook
+#### 1. 对比当前集群与helm release
+```bash
+helm get manifest <release-name> -n <namespace> | ydiff --k8s
+```
+
+#### 2. 对比当前集群与chart生成的yaml
+```bash
+helm get manifest <release-name> -n <namespace> | ydiff --k8s
+```
+
+#### 3. 对比时忽略Kubernetes自动生成的值
+```bash
+ydiff --k8s -R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules ...
+```
+
+#### 4. 指定kube config
+```bash
+export KUBECONFIG=xxx
+ydiff --k8s ...
+```
+
+或
+
+```bash
+ydiff --k8s -k 'kubectl --kubeconfig=xxx' ...
+```
+
+### 完整使用说明
 ```bash
 ydiff -h
 Yaml对比工具
