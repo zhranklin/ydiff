@@ -1,0 +1,94 @@
+* {
+  /apiVersion: always
+  /metadata/annotations/autoscaling.alpha.kubernetes.io/conditions: always
+  /metadata/annotations/autoscaling.alpha.kubernetes.io/current-metrics: always
+  /metadata/annotations/deployment.kubernetes.io/revision: always
+  /metadata/annotations/kubectl.kubernetes.io/last-applied-configuration: always
+  /metadata/creationTimestamp: always
+  /metadata/finalizers: always
+  /metadata/generation: always
+  /metadata/managedFields: always
+  /metadata/resourceVersion: always
+  /metadata/selfLink: always
+  /metadata/uid: always
+  /status: always
+}
+ValidatingWebhookConfiguration,MutatingWebhookConfiguration {
+  /webhooks/*/clientConfig/service/port: exact(443)
+  /webhooks/*/matchPolicy: exact(Equivalent)
+  /webhooks/*/objectSelector: exact([])
+  /webhooks/*/reinvocationPolicy: exact(Never)
+  /webhooks/*/rules/*/scope: exact(*)
+  /webhooks/*/timeoutSeconds: exact(10)
+}
+StatefulSet,Deployment,Job {
+  /spec/revisionHistoryLimit: exact(10)
+  /metadata/annotations/deployment.kubernetes.io/revision: always
+  /spec/template/spec/*ontainers/*/terminationMessagePath: exact(/dev/termination-log)
+  /spec/template/spec/*ontainers/*/terminationMessagePolicy: exact(File)
+  /spec/template/spec/containers/*/*Probe/failureThreshold: exact(3)
+  /spec/template/spec/containers/*/*Probe/http*/scheme: exact(HTTP)
+  /spec/template/spec/containers/*/*Probe/periodSeconds: exact(10)
+  /spec/template/spec/containers/*/*Probe/successThreshold: exact(1)
+  /spec/template/spec/containers/*/*nessProbe/timeoutSeconds: exact(1)
+  /spec/template/spec/containers/*/env/*/value: exact()
+  /spec/template/spec/containers/*/env/*/valueFrom/fieldRef/apiVersion: exact(v1)
+  /spec/template/spec/containers/*/imagePullPolicy: exact(IfNotPresent)
+  /spec/template/spec/containers/*/ports/*/protocol: exact(TCP)
+  /spec/template/spec/dnsPolicy: exact(ClusterFirst)
+  /spec/template/spec/restartPolicy: exact(Always)
+  /spec/template/spec/schedulerName: exact(default-scheduler)
+  /spec/template/spec/securityContext: exact({})
+  /spec/template/spec/serviceAccount: ref(../serviceAccountName)
+  /spec/template/spec/terminationGracePeriodSeconds: exact(30)
+  /spec/template/spec/volumes/*/*/defaultMode: exact(420)
+  /spec/template/spec/volumes/*/hostPath/type: exact()
+  /spec/template/metadata/annotations/kubectl.kubernetes.io/restartedAt: always
+  /spec/template/metadata/creationTimestamp: always
+  /spec/template/metadata/generation: always
+  /spec/template/metadata/resourceVersion: always
+  /spec/template/metadata/selfLink: always
+  /spec/template/metadata/uid: always
+  /spec/template/spec/containers/*/env: key(/name)
+  /spec/template/spec/containers/*/volumeMounts: key(/name)
+  /spec/template/spec/volumes: key(/name)
+}
+StatefulSet {
+  /spec/podManagementPolicy: exact(OrderedReady)
+  /spec/updateStrategy/type: exact(RollingUpdate)
+  /spec/updateStrategy/rollingUpdate/partition: exact(0)
+}
+Deployment {
+  /spec/progressDeadlineSeconds: exact(600)
+  /spec/strategy/rollingUpdate/maxSurge: exact(25%)
+  /spec/strategy/rollingUpdate/maxUnavailable: exact(25%)
+  /spec/strategy/type: exact(RollingUpdate)
+}
+Job {
+  /metadata/labels/controller-uid: always
+  /metadata/labels/job-name: always
+  /spec/completions: exact(1)
+  /spec/parallelism: exact(1)
+  /spec/selector/matchLabels/controller-uid: always
+  /spec/template/metadata/labels/controller-uid: always
+  /spec/template/metadata/labels/job-name: always
+}
+Service {
+  /spec/clusterIP: always
+  /spec/ports/*/protocol: exact(TCP)
+  /spec/ports/*/targetPort: ref(../port)
+  /spec/sessionAffinity: exact(None)
+  /spec/type: exact(ClusterIP)
+}
+DaemonSet {
+  /metadata/annotations/deprecated.daemonset.template.generation: always
+}
+PrometheusRule {
+  /metadata/annotations/prometheus-operator-validated: exact(true)
+}
+ServiceAccount {
+  /secrets/*/name: always
+}
+Ingress {
+  /spec/rules/*/http/paths/*/pathType: exact(ImplementationSpecific)
+}
