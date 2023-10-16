@@ -16,6 +16,9 @@ case "$(uname -sm)" in
   MSYS*\ *64)      postfix=_windows_amd64    ;;
   Windows*\ *64)   postfix=_windows_amd64    ;;
 esac
+if [[ $postfix =~ ^_linux_.* ]]; then
+  mode="$mode --graalvm-args -march=compatibility"
+fi
 if [[ $1 == "noarch" ]]; then
   mode="--assembly --jvm 8"
   postfix=_noarch
