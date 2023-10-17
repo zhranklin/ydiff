@@ -20,7 +20,7 @@ ydiff --k8s file1.yaml file2.yaml
 
 #### 3. 将Kubernetes资源文件与当前集群进行对比
 ```bash
-ydiff --k8s file1.yaml
+ydiff --k8s k8s file1.yaml
 ```
 
 或
