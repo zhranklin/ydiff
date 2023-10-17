@@ -39,9 +39,10 @@ if [[ $1 = "noarch" ]]; then
 else
   platform=${postfix#_}
 fi
+JVM_INDEX=${JVM_INDEX:-https://github.com/zhranklin/jvm-index/raw/patch-1/index.json}
 
 mkdir -p builds
 out=builds/ydiff$postfix
 rm -f $out $out.tar.gz
-scala-cli --power package -o $out $mode ydiff.sc -O -DydiffVersion=$tag -O -DydiffPlatform=$platform --jvm-index https://github.com/zhranklin/jvm-index/raw/patch-1/index.json
+scala-cli --power package -o $out $mode ydiff.sc -O -DydiffVersion=$tag -O -DydiffPlatform=$platform --jvm-index $JVM_INDEX
 tar czf $out.tar.gz $out
