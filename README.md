@@ -37,10 +37,10 @@ helm get manifest <release-name> -n <namespace> | ydiff --k8s
 
 #### 2. 对比当前集群与chart生成的yaml
 ```bash
-helm get manifest <release-name> -n <namespace> | ydiff --k8s
+helm template <chart-path> -n <namespace> | ydiff --k8s
 ```
 
-#### 3. 对比时忽略Kubernetes自动生成的值
+#### 3. 对比时忽略Kubernetes自动生成的默认值
 ```bash
 ydiff --k8s -R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules ...
 ```
