@@ -11,70 +11,38 @@
 //> using dep com.github.scopt::scopt:4.1.0
 //> using dep org.scala-lang.modules::scala-parser-combinators:2.3.0
 
-import java.io.File
-import scala.collection.mutable
-import scala.collection.MapView
-import scala.language.dynamics._
-
-import com.fasterxml.jackson.databind.node.{ArrayNode, JsonNodeFactory, ObjectNode, TextNode, MissingNode}
+import com.fasterxml.jackson.databind.node.{ArrayNode, JsonNodeFactory, MissingNode, NullNode, ObjectNode, TextNode}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.flipkart.zjsonpatch.{DiffFlags, JsonDiff}
 import com.github.difflib.text.DiffRowGenerator
-import zrkn.op._
-import com.fasterxml.jackson.databind.node.NullNode
-import java.util.regex.Matcher
-import scala.language.dynamics
+import io.github.azagniotov.matcher.AntPathMatcher
+import os.{CommandResult, Path, pwd, read, root}
+import zrkn.op.{*, given}
 
-import scala.jdk.CollectionConverters._
-import io.github.azagniotov.matcher.AntPathMatcher;
-
-import java.util.regex.Pattern
-import scala.util.boundary, boundary.break
-
-import zrkn.op.given
-import os.{root, read, Path, CommandResult, pwd}
-import scala.util.Try
+import java.io.File
+import java.util.regex.{Matcher, Pattern}
+import scala.collection.{MapView, mutable}
 import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters.*
+import scala.language.dynamics
+import scala.util.{Try, boundary}
 
-val jsonMapper = new ObjectMapper
-
+extension (s: String) def unescapePath: String = s.replaceAll("~0", "~").replaceAll("~1", "/")
 def getPath(p: String) =
   if p.equals("-") then
     root/"dev"/"stdin"
   else
     Path.expandUser(p, pwd)
-
 def yamlFactory =
-  import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
+  import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.*
   new YAMLFactory()
     .disable(WRITE_DOC_START_MARKER)
     .enable(MINIMIZE_QUOTES)
 
-def groups(str: String) = "\\(".r.findAllIn(str).size - """\(\?([idmsuxU=>!:]|<[!=])""".r.findAllIn(str).size
-class Interped(sc: StringContext):
-  def unapplySeq(s: String): Option[Seq[String]] =
-    val parts = sc.parts
-    val tail = parts.tail.map(s => if s.startsWith("(") then s else "(.*)" + s)
-    val pattern = Pattern.compile(parts.head + tail.mkString)
-    var groupCount = groups(parts.head)
-    val usedGroup = tail.map: part =>
-      val ret = groupCount
-      groupCount += groups(part)
-      ret
-    val m = pattern matcher s
-    if m.matches() then
-      Some(usedGroup.map(i => m.group(i + 1)))
-    else None
-
-extension (sc: StringContext) def rr: Interped = new Interped(sc)
-
 object c:
-  extension (s: String)
-    def unescapePath: String = s.replaceAll("~0", "~").replaceAll("~1", "/")
-
+  import org.fusesource.jansi.Ansi.Attribute.*
   import org.fusesource.jansi.Ansi.{Color, ansi}
-  import org.fusesource.jansi.Ansi.Attribute._
   val MARK_DELETE_LINE = "<DELETE_LINE>"
   val MARK_MODIFY_LINE = "<MODIFY_LINE>"
   val MARK_ADD_LINE = "<INSERT_LINE>"
@@ -91,7 +59,6 @@ object c:
   val MINUS = ansi().render("@|red -|@").toString
   val PLUS = ansi().render("@|green +|@").toString
   val TILDE = ansi().render("@|yellow ~|@").toString
-import c.unescapePath
 
 trait ValueMatcher:
   val newNode = JsonNodeFactory.instance.pojoNode _
@@ -140,7 +107,6 @@ object ValueMatcher:
   def ref(path: String) = new ValueMatcher:
     def matches(node: JsonNode, basePath: String, value: JsonNode) =
       getValue(node, basePath, path).exists(jsonEquals(_, value))
-    end matches
     override def toString = s"ref($path)"
 
   object always extends ValueMatcher:
@@ -148,34 +114,27 @@ object ValueMatcher:
     override def toString = "always"
 
 object KubectlParser extends scala.util.parsing.combinator.RegexParsers:
-  import scala.util.parsing.combinator._
+  import scala.util.parsing.combinator.*
   val nonSpace = "[^ ]+".r
   type M = List[(String, String)]
-  type PM = Parser[M]
-  def args: PM = (nsOpt | fileOpt | oyaml | replicasOpt | normalArg).+ ^^ { _.fold(List.empty[(String, String)])(_++_) }
-  def nsOpt: PM = ("-n" | "--namespace") ~! nonSpace ^^ { case _ ~ ns => List("namespace" -> ns) }
-  def fileOpt: PM = ("-f" | "--file") ~! nonSpace ^^ { case _ ~ ns => List("file" -> ns) }
-  def replicasOpt: PM = ("--replicas=\\d+".r) ^^ { case rs => List("replicas" -> rs.split("=")(1)) } | "--replicas" ~! "\\d+".r ^^ { case _ ~ rs => List("replicas" -> rs) }
-  def oyaml: PM = (("-o" ~! "yaml")) ^^ {_ => List("format" -> "yaml")}
-  def normalArg: PM = nonSpace ^^ {a => List("arg" -> a)}
+  def args: Parser[M] = (nsOpt | fileOpt | oyaml | replicasOpt | normalArg).+ ^^ { _.fold(List.empty[(String, String)])(_++_) }
+  def nsOpt: Parser[M] = ("-n" | "--namespace") ~! nonSpace ^^ { case _ ~ ns => List("namespace" -> ns) }
+  def fileOpt: Parser[M] = ("-f" | "--file") ~! nonSpace ^^ { case _ ~ ns => List("file" -> ns) }
+  def replicasOpt: Parser[M] = ("--replicas=\\d+".r) ^^ { case rs => List("replicas" -> rs.split("=")(1)) } | "--replicas" ~! "\\d+".r ^^ { case _ ~ rs => List("replicas" -> rs) }
+  def oyaml: Parser[M] = (("-o" ~! "yaml")) ^^ {_ => List("format" -> "yaml")}
+  def normalArg: Parser[M] = nonSpace ^^ {a => List("arg" -> a)}
   def parse0(s: String) = parseAll(args, s) match
     case Success(matched, _) => matched
-    case Failure(msg, _) =>
-      println(msg)
-      throw new Exception
-    case Error(msg, _) =>
-      println(msg)
-      throw new Exception
+    case m @ (_: Error | _: Failure) => println(m); throw new Exception
 extension (p: KubectlParser.M) def apply(key: String) = p.filter(_._1 == key).map(_._2)
 
 object KubectlExec:
-  import KubectlParser.{M, PM, parse0}
   val source = getPath(System.getenv("YDIFF_KUBECTL_SOURCE"))
   val db = source / os.up / source.last.replaceFirst("((\\.yaml|\\.yml|)$)", ".modified$1")
 
   def doApply(cmd: String, inputs: List[String]) =
-    import Models._
-    var result = (read(db) :: inputs)
+    import Models.*
+    val result = (read(db) :: inputs)
       .map: f =>
         new YamlDocs.Static(f, true).sourceObjs(using DiffArgs(flags = Set("k8s"))).toMap
       .reduce: (source, added) =>
@@ -197,7 +156,6 @@ object KubectlExec:
       .mkString("\n")
     os.write.over(db, result)
 
-
   def setImage(tree: JsonNode, expr: String): JsonNode =
     val Array(lhs, rhs) = expr.split("=", 2)
     val containers = tree.get("spec").get("template").get("spec").get("containers").elements
@@ -205,13 +163,13 @@ object KubectlExec:
       .filter(_.get("name").textValue == lhs)
       .foreach{o => o.asInstanceOf[ObjectNode].put("image", rhs)}
     tree
-  def kubeSet(a: M) =
-    import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature._
+  def kubeSet(a: KubectlParser.M) =
+    import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.*
     val ym = new ObjectMapper(new YAMLFactory().disable(WRITE_DOC_START_MARKER))
     def tree(kind: String, name: String) = ym.readTree(doGetOrDelete(kind, a("namespace").headOption, name, false).head.yaml)
     val result = a("arg") match
-      case "set" :: "image" :: kind :: name :: expr :: rest => setImage(tree(kind, name), expr)
-      case "scale" :: kind :: name :: rest =>
+      case "set" :: "image" :: kind :: name :: expr :: _ => setImage(tree(kind, name), expr)
+      case "scale" :: kind :: name :: _ =>
         val t = tree(kind, name)
         t.get("spec").asInstanceOf[ObjectNode].put("replicas", a("replicas").head.toInt)
         t
@@ -256,8 +214,9 @@ object KubectlExec:
         println(s"Command $cmd not supported.")
         System.exit(1)
 
+type Rules = Map[String, List[(String, ValueMatcher | KeyExtractor)]]
 object RulesParser extends scala.util.parsing.combinator.RegexParsers:
-  import scala.util.parsing.combinator._
+  import scala.util.parsing.combinator.*
   def groups: Parser[Rules] = rep(group) ^^ (_.groupBy(_._1).map{ tp => tp._1 -> tp._2.map(_._2).flatten}.toMap)
   def group = kind ~ "{" ~ rep(rule) ~ "}" ^^ {
     case k ~ _ ~ matches ~ _ => k -> matches
@@ -293,10 +252,7 @@ object RulesParser extends scala.util.parsing.combinator.RegexParsers:
               result.update(k, result(k).++(v))
             else result.put(k, v)
     result.toMap
-  end parseAndMerge
-end RulesParser 
-
-type Rules = Map[String, List[(String, ValueMatcher | KeyExtractor)]]
+end RulesParser
 
 object Models:
   case class DocID(id: String, `tpe`: String = "Yaml Doc"):
@@ -307,17 +263,18 @@ object Models:
   trait Changes:
     def sorting: String
   case class NewResource(doc: YamlDoc, show: Boolean) extends Changes:
-    import c._, doc.id
+    import c.*
+    import doc.id
     override def toString = s"---\n$ADD# New $id${if show then s"\n${doc.yaml}" else ""}$RESET"
     override def sorting = s"3$id"
   case class RemovedResource(doc: YamlDoc, show: Boolean) extends Changes:
-    import c._, doc.id
+    import c.*
+    import doc.id
     override def toString = s"---\n$DELETE# Removed $id${if show then s"\n${doc.yaml}" else ""}$RESET"
     override def sorting = s"2$id"
   case class DiffResource(id: DocID, changes: ObjectNode, show: Boolean) extends Changes:
     override def toString =
       s"---\n# Diffs in $id${if show then s"\n${new ObjectMapper(yamlFactory).writeValueAsString(changes)}" else ""}"
-    end toString
     override def sorting = s"1$id"
   val om = new ObjectMapper()
   case class DiffResourceJsonPatch(id: DocID, tree: JsonNode, patch: List[JsonNode]) extends Changes:
@@ -327,7 +284,6 @@ object Models:
         node.get("path").textValue() match
           case path @ rr"/spec/template/spec/containers/$c/env/$env/name" => s"# Ignored env: ${node.get("value")}"
           case path @ rr"/spec/template/spec/containers/$c/env/$env/value" =>
-            //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
             val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("env").get(env.toInt).get("name").textValue()
             val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
             if patch.exists(_.get("path").textValue().equals(path.replaceAll("/value$", "/name"))) then
@@ -335,7 +291,6 @@ object Models:
             else
               s"kubectl -n ${d.namespace} set env ${d.kind} ${d.name} --containers=$containerName $name='${node.get("value").textValue()}'"
           case path @ rr"/spec/template/spec/containers/$c/image" =>
-            //val name = com.flipkart.zjsonpatch.JsonPointer.parse(s"/spec/template/spec/containers/$c/env/$env/name").evaluate(tree).textValue()
             val name = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("image").textValue()
             val containerName = tree.get("spec").get("template").get("spec").get("containers").get(c.toInt).get("name").textValue()
             s"kubectl -n ${d.namespace} set image ${d.kind} ${d.name} $containerName=${node.get("value").textValue()}"
@@ -347,7 +302,6 @@ object Models:
       case _: GVK => doToString
       case _ => "# Only k8s resources are supported"
     )
-    end toString
     override def sorting = s"1$id"
 
 object YamlDocs:
@@ -356,19 +310,17 @@ object YamlDocs:
     def get(id: DocID)(using ReadOption): Option[YamlDoc]
   object FromK8s extends SourceDatabase:
     def get(id: DocID)(using ReadOption): Option[YamlDoc] = id match
-      case gvk: GVK => get(gvk)
+      case gvk: GVK =>
+        import gvk.*
+        val cmd = s"${summon[ReadOption].kubectlCmd} get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}"
+        val result = bash(cmd).!!!
+        if result.exitCode == 0 then
+          YamlDocs.read(result.out.text(), true, None)
+        else if result.err.text().contains("(NotFound)") || result.err.text().contains("doesn't have a resource type") then
+          None
+        else
+          throw new Exception(s"Error executing kubectl cmd '$cmd'.\n${result.err.text()}")
       case _ => None
-    def get(gvk: GVK)(using ReadOption): Option[YamlDoc] =
-      import gvk._
-      val cmd = s"${summon[ReadOption].kubectlCmd} get $kind -oyaml $name ${if (namespace.isEmpty) "" else s"-n $namespace"}"
-      val result = bash(cmd).!!!
-      if result.exitCode == 0 then
-        YamlDocs.read(result.out.text(), true, None)
-      else if result.err.text().contains("(NotFound)") || result.err.text().contains("doesn't have a resource type") then
-        None
-      else
-        throw new Exception(s"Error executing kubectl cmd '$cmd'.\n${result.err.text()}")
-    end get
 
   class Static(src: => String, isK8s: => Boolean) extends SourceDatabase:
     var _sobj: MapView[DocID, YamlDoc] = _
@@ -398,7 +350,6 @@ object YamlDocs:
                 None
               case _ =>
       case _ =>
-  end removeTrailingSpaces
 
   def expandTextToYaml(node: JsonNode): Unit =
     node match
@@ -409,8 +360,7 @@ object YamlDocs:
               case v: TextNode =>
                 Try(new ObjectMapper(yamlFactory).readTree(v.textValue())).toOption
                   .filter(_.isObject)
-                  .map: o =>
-                    (kv.getKey, o)
+                  .map(kv.getKey -> _)
               case v: ObjectNode =>
                 expandTextToYaml(v)
                 None
@@ -476,7 +426,7 @@ object YamlDocs:
   end removeIgnoredFields
 
   def read(yaml0: String, k8s: Boolean, index: Option[Int])(using args: ReadOption): Option[YamlDoc] = boundary:
-    if yaml0.trim.isEmpty then break(None)
+    if yaml0.trim.isEmpty then boundary.break(None)
     import scala.util
     Try:
       val yaml = args.neatCmd.map(c => echo(yaml0) | bash(c) | !!).filter(_.trim != "{}").getOrElse(yaml0)
@@ -497,14 +447,12 @@ object YamlDocs:
         val kind = tree.get("kind").asText()
         rules = args.rules.getOrElse(kind, Nil) ::: args.rules.getOrElse("*", Nil)
         removeIgnoredFields(tree, tree, "", rules.filter(_._2.isInstanceOf[ValueMatcher]).map(tp => (tp._1, tp._2.asInstanceOf[ValueMatcher])))
-      if args.expandText then
-        expandTextToYaml(tree)
+      if args.expandText then expandTextToYaml(tree)
       removeTrailingSpaces(tree)
       arrayToObj("", tree, rules.filter(_._2.isInstanceOf[KeyExtractor]).map(tp => (tp._1, tp._2.asInstanceOf[KeyExtractor])))
       Models.YamlDoc(yaml, tree, id)
     .recoverWith[YamlDoc]:
-      case t: RuntimeException if t.getMessage == "EMPTY_OBJECT" =>
-        util.Failure(t)
+      case t: RuntimeException if t.getMessage == "EMPTY_OBJECT" => util.Failure(t)
       case t =>
         try
           println("Yaml Parse Error")
@@ -522,7 +470,7 @@ object YamlDocs:
 
 class YamlDiffer(using args: DiffArgs):
   val inline = args.f.inline
-  import DiffFlags._
+  import DiffFlags.*
   val DIFF_FLAGS = java.util.EnumSet.of(OMIT_MOVE_OPERATION, OMIT_COPY_OPERATION, ADD_ORIGINAL_VALUE_ON_REPLACE)
   val diffRowGenerator = DiffRowGenerator.create()
     .showInlineDiffs(inline)
@@ -538,8 +486,9 @@ class YamlDiffer(using args: DiffArgs):
       case n => n.toString.split("\n").toList.asJava
     diffRowGenerator.generateDiffRows(splitNode(from), splitNode(to)).asScala
       .flatMap: l =>
-        import c._, l._
+        import c.*
         import com.github.difflib.text.DiffRow.Tag
+        import l.*
         if inline then
           val mode = getTag match
             case Tag.INSERT => MARK_ADD_LINE
@@ -557,13 +506,13 @@ class YamlDiffer(using args: DiffArgs):
   end generateDiffText
 
   def doDiff: Unit =
-    import Models.{NewResource, RemovedResource, DiffResource, DiffResourceJsonPatch}
+    import Models.{DiffResource, DiffResourceJsonPatch, NewResource, RemovedResource}
     if args.debug.rules then
       println(args.rules.toString().replaceAll(", ", ",\n"))
     val targetDocs = new YamlDocs.Static(read(args.target), args.f.k8s).sourceObjs.values
     args.dump.foreach: fn =>
       println(s"Dumping resource to file $fn...")
-      import Models._
+      import Models.*
       val sources: List[Either[DocID, YamlDoc]] = targetDocs.map(_.id).map(id => args.source.get(id).map(Right(_)).getOrElse(Left(id))).toList
       val linesForAbsent: List[String] = sources.flatMap(_.left.toOption).map(id => s"# Missing resource: $id")
       val linesForPresent: List[String] = sources.flatMap(_.right.toOption).map(doc => s"---\n${doc.yaml}")
@@ -580,10 +529,10 @@ class YamlDiffer(using args: DiffArgs):
             val result = JsonNodeFactory.instance.objectNode()
             patch
               .foreach: n =>
-                import c._
+                import c.*
                 val path = n.get("path").asText()
                 val value = n.get("value")
-                import com.fasterxml.jackson.databind.node.JsonNodeType._
+                import com.fasterxml.jackson.databind.node.JsonNodeType.*
                 n.get("op").asText() match
                   case "remove" =>
                       setValue(result, s"$path$MARK_DELETE_FIELD", value)
@@ -621,7 +570,7 @@ class YamlDiffer(using args: DiffArgs):
       }
       .sortBy(_.sorting)
       .foreach: res =>
-        import c._
+        import c.*
         var indent = 0
         var lineTemplate = " $1$2"
         res.toString.split("\n").foreach: line0 =>
@@ -666,7 +615,6 @@ class YamlDiffer(using args: DiffArgs):
           cur.put(p, JsonNodeFactory.instance.objectNode())
         cur = cur.get(p).asInstanceOf[ObjectNode]
     cur.put(path.split("/").last.unescapePath, value)
-  end setValue
 
   val MARKER_PT = java.util.regex.Pattern.compile(s"(?s)(${c.TAG_ADD}|${c.TAG_DELETE}).*?${c.TAG_END}")
   // e.g.
@@ -689,11 +637,10 @@ class YamlDiffer(using args: DiffArgs):
       mth.appendReplacement(b, Matcher.quoteReplacement(replacement))
     mth.appendTail(b)
     b.toString
-  end processCrossLineDiff
 
   def stripMultiLineDiff(diff: String)(using DiffArgs): String =
     val aroundLines = summon[DiffArgs].multiLineAroundLines
-    import c._
+    import c.*
     val lines = diff.linesWithSeparators.toList
     var hasSkipped = false
     val resultLines = mutable.ListBuffer[String]()
@@ -714,7 +661,6 @@ class YamlDiffer(using args: DiffArgs):
     resultLines.mkString("")
   end stripMultiLineDiff
 
-type Args = DiffArgs
 class ReadOption(val kubectlCmd: String = "kubectl", val rules: Rules = Map(), val isK8s: Boolean = true, val expandText: Boolean = false, val printIgnores: Boolean = false, val neatCmd: Option[String] = None)
 case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
                 target: Path = root/"dev"/"stdin",
@@ -745,15 +691,15 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
   )
 
 object Args:
-  import org.fusesource.jansi.Ansi.{Color, ansi, Attribute}
+  import org.fusesource.jansi.Ansi.{Attribute, Color, ansi}
   val param = ansi().fg(Color.CYAN).a(Attribute.INTENSITY_BOLD).toString()
   val reset = ansi().reset().toString()
-  extension (p: scopt.OParser[Unit, Args])
-    def flagF(f: String) = p.action((_, a) => a.asInstanceOf[DiffArgs].copy(flags = a.asInstanceOf[DiffArgs].flags.+(f)))
-    def flagNoF(f: String) = p.action((_, a) => a.asInstanceOf[DiffArgs].copy(flags = a.asInstanceOf[DiffArgs].flags.-(f)))
+  extension (p: scopt.OParser[Unit, DiffArgs])
+    def flagF(f: String) = p.action((_, a) => a.copy(flags = a.flags.+(f)))
+    def flagNoF(f: String) = p.action((_, a) => a.copy(flags = a.flags.-(f)))
   def flagToToken(f: String) = "-([a-z])".r.replaceSomeIn(f, m => Some(m.group(1).toUpperCase))
   import scopt.OParser
-  val builder = OParser.builder[Args]
+  val builder = OParser.builder[DiffArgs]
   extension (p: String) def zh(z: String): String = 
     if (System.getProperty("ydiffLang") == "zh") z
     else p
@@ -768,17 +714,18 @@ object Args:
       s"$version\nUniversal version (on Java), $deps"
     else
       s"$version\nFor $p, $deps, GraalVM Native Image".replaceAll("_", " ")
+  extension [A, C](s: scopt.OParser[A, C]) def textC(str: String): OParser[A, C] = s.text(reset + str + param)
   def parser =
-    import builder.{arg, _}
+    import builder.*
     OParser.sequence(
       programName("ydiff"),
       head("Yaml Diff ".zh("Yaml对比工具 ") + buildInfo + param),
       help('h', "help")
-        .text(reset+"Show this help.".zh("显示帮助文档")+param),
+        .textC("Show this help.".zh("显示帮助文档")),
       version('v', "version")
-        .text(reset+"Show version".zh("显示版本")+param),
+        .textC("Show version".zh("显示版本")),
       opt[String]('l', "lang")
-        .text(reset+"Choose language(zh/en)|选择语言(zh/en)"+param)
+        .textC("Choose language(zh/en)|选择语言(zh/en)")
         .valueName("<language>")
         .action: (l, a) =>
           System.setProperty("ydiffLang", l)
@@ -786,14 +733,14 @@ object Args:
           a,
       note(""),
       cmd("diff")
-        .text(reset+"The default command. Run the YAML diff".zh("(默认)运行YAML对比工具")+param)
+        .textC("The default command. Run the YAML diff".zh("(默认)运行YAML对比工具"))
         .children(
           opt[Unit]("k8s")
-            .text(reset+"Treat yaml docs as kubernetes resources.".zh("将输入当做Kubernetes资源处理。")+param)
+            .textC("Treat yaml docs as kubernetes resources.".zh("将输入当做Kubernetes资源处理。"))
             .optional()
             .flagF("k8s"),
           opt[Unit]("neat")
-            .text(reset+"Use kubectl neat".zh("使用kubectl neat")+param)
+            .textC("Use kubectl neat".zh("使用kubectl neat"))
             .optional()
             .flagF("neat")
             .action: (_, a) =>
@@ -801,57 +748,57 @@ object Args:
                 neatCmd = List("kubectl neat", "kubectl-neat").find(c => bash(c + " --help").!!!.exitCode == 0)
               ),
           opt[Unit]("json-patch")
-            .text(reset+"Print kubectl patch commands(k8s only).".zh("输出kubectl patch命令(仅k8s模式)。")+param)
+            .textC("Print kubectl patch commands(k8s only).".zh("输出kubectl patch命令(仅k8s模式)。"))
             .flagF("jsonPatch"),
           opt[Unit]("show-new")
-            .text(reset+"Show complete yaml text of new yaml docs.".zh("完整输出新增的YAML。")+param)
+            .textC("Show complete yaml text of new yaml docs.".zh("完整输出新增的YAML。"))
             .optional()
             .flagF("showNew"),
           opt[Unit]("show-removed")
-            .text(reset+"Show complete yaml text of removed yaml docs.".zh("完成输出删除的YAML。")+param)
+            .textC("Show complete yaml text of removed yaml docs.".zh("完成输出删除的YAML。"))
             .optional()
             .flagF("showRemoved"),
           opt[Unit]("only-id")
-            .text(reset+"Show only IDs for changed/removed/added docs".zh("对于所有的修改/删除/新增YAML, 只输出ID。")+param)
+            .textC("Show only IDs for changed/removed/added docs".zh("对于所有的修改/删除/新增YAML, 只输出ID。"))
             .optional()
             .flagF("onlyId"),
           opt[Unit]("no-inline")
-            .text(reset+"Show diff line by line.".zh("按行显示差异")+param)
+            .textC("Show diff line by line.".zh("按行显示差异"))
             .flagNoF("inline"),
           opt[Unit]("no-removed")
-            .text(reset+"Don't show removed resources.".zh("不显示删除的资源")+param)
+            .textC("Don't show removed resources.".zh("不显示删除的资源"))
             .flagNoF("removed"),
           opt[Unit]("no-expand-text")
-            .text(reset+"Don't expand string to yaml".zh("不会自动将字符串展开成yaml进行对比")+param)
+            .textC("Don't expand string to yaml".zh("不会自动将字符串展开成yaml进行对比"))
             .flagNoF("expandText"),
           opt[String]('k', "kubectl-cmd")
-            .text(reset+"Specify the kubectl cmd".zh("指定kubectl命令")+param)
+            .textC("Specify the kubectl cmd".zh("指定kubectl命令"))
             .valueName("<cmd>")
             .optional()
             .action: (k, a) =>
               a.copy(kubectlCmd = k),
           opt[Int]('m', "multi-lines-around")
-            .text(reset+"How many lines should be printed before and after\nthe diff line in multi-line string".zh("跨行字符串中, 差异文本上下保留的行数。")+param)
+            .textC("How many lines should be printed before and after\nthe diff line in multi-line string".zh("跨行字符串中, 差异文本上下保留的行数。"))
             .valueName("<lines>")
             .optional()
             .action: (l, a) =>
               a.copy(multiLineAroundLines = l),
           opt[String]('r', "rules")
-            .text(reset+"Rules, can be specified multiple times.".zh("指定过滤规则, 可多次指定(仅k8s模式)。")+param)
+            .textC("Rules, can be specified multiple times.".zh("指定过滤规则, 可多次指定(仅k8s模式)。"))
             .valueName("<rules-text>")
             .optional()
             .unbounded()
             .action: (i, a) =>
               a.copy(extraRules = a.extraRules.appended(i)),
           opt[String]('R', "rule-file")
-            .text(reset+"Rules file, can be specified multiple times.".zh("指定过滤规则文件/URL, 可多次指定(仅k8s模式)。如-R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules")+param)
+            .textC("Rules file, can be specified multiple times.".zh("指定过滤规则文件/URL, 可多次指定(仅k8s模式)。如-R https://raw.githubusercontent.com/zhranklin/ydiff/master/builtin-rules"))
             .valueName("<file/url>")
             .optional()
             .unbounded()
             .action: (p, a) =>
               a.copy(extraRuleFiles = a.extraRuleFiles.appended(p)),
           opt[String]("dump")
-            .text(reset+"Dump file name, if set, the resource of k8s source will be dumped to the file".zh("备份的文件名, 设置后将备份导出源yaml(仅k8s模式)。")+param)
+            .textC("Dump file name, if set, the resource of k8s source will be dumped to the file".zh("备份的文件名, 设置后将备份导出源yaml(仅k8s模式)。"))
             .valueName("<file>")
             .optional()
             .action: (p, a) =>
@@ -861,7 +808,7 @@ object Args:
             .action: (d, a) =>
               a.copy(debugFlags = a.debugFlags.+(flagToToken(d))),
           arg[String]("source-file")
-            .text(reset+"Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.".zh("来源文件名, 用k8s表示取自k8s集群, 默认为k8s。")+param)
+            .textC("Source yaml file, specify \"k8s\" to fetch resource\nfrom kubernetes cluster, and default to be k8s.".zh("来源文件名, 用k8s表示取自k8s集群, 默认为k8s。"))
             .optional()
             .action: (f, a) =>
               val docs =
@@ -869,7 +816,7 @@ object Args:
                 else new YamlDocs.Static(read(getPath(f)), a.f.k8s)
               a.copy(source = docs),
           arg[String]("target-file")
-            .text(reset+"Target yaml file, default to be stdin.".zh("目标文件名, 默认为标准输入。")+param)
+            .textC("Target yaml file, default to be stdin.".zh("目标文件名, 默认为标准输入。"))
             .optional()
             .action: (f, a) =>
               a.copy(target = if f.equals("-") then root/"dev"/"stdin" else getPath(f)),
@@ -879,7 +826,7 @@ object Args:
         .text("kubectl命令行模拟, 详见: ydiff kubectl --help")
         .children(
           help('h', "help")
-            .text(reset+"Show kubectl help".zh("显示ydiff kubectl帮助文档")+param)
+            .textC("Show kubectl help".zh("显示ydiff kubectl帮助文档"))
         ),
       note(reset),
       checkConfig:
