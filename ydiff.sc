@@ -256,7 +256,7 @@ object KubectlExec:
         println(s"Command $cmd not supported.")
         System.exit(1)
 
-object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
+object RulesParser extends scala.util.parsing.combinator.RegexParsers:
   import scala.util.parsing.combinator._
   def groups: Parser[Rules] = rep(group) ^^ (_.groupBy(_._1).map{ tp => tp._1 -> tp._2.map(_._2).flatten}.toMap)
   def group = kind ~ "{" ~ rep(rule) ~ "}" ^^ {
@@ -294,7 +294,7 @@ object IgnoreRulesParser extends scala.util.parsing.combinator.RegexParsers:
             else result.put(k, v)
     result.toMap
   end parseAndMerge
-end IgnoreRulesParser 
+end RulesParser 
 
 type Rules = Map[String, List[(String, ValueMatcher | KeyExtractor)]]
 
@@ -740,7 +740,7 @@ case class DiffArgs(source: YamlDocs.SourceDatabase = YamlDocs.FromK8s,
       res
     else read(getPath(p))
   def processDefault: DiffArgs = this.copy(
-    rules = IgnoreRulesParser.parseAndMerge(extraRules ::: extraRuleFiles.map(readOrDownload)),
+    rules = RulesParser.parseAndMerge(extraRules ::: extraRuleFiles.map(readOrDownload)),
     flags = if source.isInstanceOf[YamlDocs.FromK8s.type] then flags.+("k8s") else flags
   )
 
